@@ -25,3 +25,9 @@
 
 ## Code rules
 - Pure logic (time, registry, physics math) has no DOM or Three.js imports, so it can be tested in Node.
+
+## Track
+- The track is a closed Catmull-Rom curve in the XZ plane, defined in `src/track/trackData.js`.
+- `buildTrack` resamples it at equal distances. Each point has distance `s`, position, unit tangent, right normal, signed curvature and width.
+- Positive curvature is a right turn. Heading is `atan2(tz, tx)`. Right normal is `(-tz, tx)`.
+- Checkpoint 0 is the start line. Bots and lap logic read the sampled points, never the raw control points.

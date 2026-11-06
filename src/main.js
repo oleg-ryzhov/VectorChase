@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { FixedStepper } from './core/time.js';
 import { Input } from './core/input.js';
 import { runLoop } from './core/loop.js';
+import { buildTrack } from './track/track.js';
+import { CONTROL_POINTS, TRACK_OPTIONS } from './track/trackData.js';
+import { buildTrackMesh, buildDebugOverlay } from './track/trackMesh.js';
 
 const SLOW_MO_SCALE = 0.25;
 const MOVE_SPEED = 10; // m/s
@@ -26,11 +29,15 @@ sun.position.set(10, 20, 10);
 scene.add(sun);
 
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(200, 200),
+  new THREE.PlaneGeometry(800, 800),
   new THREE.MeshStandardMaterial({ color: 0x2e3440 })
 );
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
+const track = buildTrack(CONTROL_POINTS, TRACK_OPTIONS);
+scene.add(buildTrackMesh(track));
+const debugOverlay = buildDebugOverlay(track);
+scene.add(debugOverlay);
 
 const cube = new THREE.Mesh(
   new THREE.BoxGeometry(1, 1, 1),
@@ -38,9 +45,10 @@ const cube = new THREE.Mesh(
 );
 scene.add(cube);
 
+const start = track.points[0];
 const state = {
-  pos: new THREE.Vector3(0, 0.5, 0),
-  prev: new THREE.Vector3(0, 0.5, 0),
+  pos: new THREE.Vector3(start.x, 0.5, start.z),
+  prev: new THREE.Vector3(start.x, 0.5, start.z),
   vel: new THREE.Vector3(),
 };
 const target = new THREE.Vector3();
@@ -51,6 +59,7 @@ const stepper = new FixedStepper(1 / 120, 8);
 function beforeFrame() {
   // Read per-frame input here, never inside fixedUpdate.
   stepper.timeScale = input.isDown('Space') ? SLOW_MO_SCALE : 1;
+  if (input.wasPressed('KeyG')) debugOverlay.visible = !debugOverlay.visible;
 }
 
 function fixedUpdate(dt) {
@@ -82,7 +91,7 @@ function render(alpha, info) {
 
   hud.textContent =
     `timeScale ${info.timeScale.toFixed(2)} · steps ${info.steps} · ` +
-    'WASD/arrows to move · hold Space for slow motion';
+    'WASD/arrows move · Space slow-mo · G debug line';;
 
   input.endFrame();
 }
