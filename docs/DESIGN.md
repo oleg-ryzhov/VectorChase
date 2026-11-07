@@ -31,3 +31,11 @@
 - `buildTrack` resamples it at equal distances. Each point has distance `s`, position, unit tangent, right normal, signed curvature and width.
 - Positive curvature is a right turn. Heading is `atan2(tz, tx)`. Right normal is `(-tz, tx)`.
 - Checkpoint 0 is the start line. Bots and lap logic read the sampled points, never the raw control points.
+
+## Vehicle
+- The car is a planar four-wheel model in `src/physics/vehicle.js`. Body axes: u forward, v right, r yaw rate (positive = turning right).
+- Each wheel has its own spin speed and inertia. Tire force comes from slip ratio and slip angle using a combined-slip curve scaled by friction and wheel load.
+- Wheel load includes static weight distribution plus longitudinal and lateral load transfer.
+- Rear-wheel drive with an open differential. Drive and brake torque are capped just below the tire's grip limit (acts as traction control and ABS).
+- Mass, engine power and tire friction are read from the registry every step. All other car values live in `CAR` and the constants at the top of `vehicle.js`.
+- `src/car/carModel.js` imports `CAR` so wheel positions in the model always match the physics.
