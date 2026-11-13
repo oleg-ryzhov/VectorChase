@@ -1,18 +1,20 @@
 import * as THREE from 'three';
-import { CAR } from '../physics/vehicle.js';
+import { readCarSpec, TRACK } from '../physics/spec.js';
 
-const ROAD_SURFACE_Y = 0.05; // matches ROAD_Y in track/trackMesh.js
 const BODY_PIVOT_Y = 0.5; // body pitches and rolls about this height
 const TIRE_WIDTH = 0.26;
 const RIM_RADIUS = 0.22;
 const ARCH_RADIUS = 0.42;
 const SILL_Y = 0.2;
+// Dimensions the body and wheel meshes are modelled at. Live values scale from these.
+const MODEL_WHEEL_RADIUS = 0.33;
+const MODEL_FRONT_AXLE_X = 1.3;
+const MODEL_REAR_AXLE_X = -1.4;
 const EYE = { x: 0.1, y: 1.15, z: -0.38 }; // driver's eye, left-hand drive
 const STEERING_WHEEL_RATIO = 8;
 const CENTER_HALF_WIDTH = 0.58;
 const BODY_HALF_WIDTH = 0.925;
 
-const paint = new THREE.MeshStandardMaterial({ color: 0xc1121f, metalness: 0.35, roughness: 0.3 });
 const glass = new THREE.MeshStandardMaterial({ color: 0x0d1720, metalness: 0.2, roughness: 0.08 });
 const dark = new THREE.MeshStandardMaterial({ color: 0x15171c, metalness: 0.3, roughness: 0.7 });
 const rubber = new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.95, side: THREE.DoubleSide });
@@ -28,11 +30,6 @@ const headlightMat = new THREE.MeshStandardMaterial({
   emissive: 0xfff2cc,
   emissiveIntensity: 1.2,
 });
-const taillightMat = new THREE.MeshStandardMaterial({
-  color: 0x330000,
-  emissive: 0xff1a1a,
-  emissiveIntensity: 0.6,
-});
 const marker = new THREE.MeshBasicMaterial({ color: 0xffd166 });
 
 function polygon(points) {
@@ -43,14 +40,15 @@ function polygon(points) {
 }
 
 // Extrudes a side profile (x forward, y up) across the car's width, centred on z = 0.
+// Several bevel segments round the edges so the body looks smooth rather than faceted.
 function extrude(shape, depth, material, bevel = 0.03) {
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
     bevelThickness: bevel,
     bevelSize: bevel,
-    bevelSegments: 2,
-    curveSegments: 16,
+    bevelSegments: 5,
+    curveSegments: 24,
   });
   geometry.translate(0, 0, -depth / 2);
   return new THREE.Mesh(geometry, material);
@@ -64,7 +62,7 @@ function box(w, h, d, material, x, y, z) {
 
 // Wheel arch cut into the bottom edge, drawn while walking the outline from front to rear.
 function cutArch(shape, axleX) {
-  const cy = CAR.wheelRadius;
+  const cy = MODEL_WHEEL_RADIUS;
   const dx = Math.sqrt(ARCH_RADIUS ** 2 - (cy - SILL_Y) ** 2);
   const a0 = Math.atan2(SILL_Y - cy, dx);
   shape.lineTo(axleX + dx, SILL_Y);
@@ -83,8 +81,8 @@ function bodyShape(withArches) {
   s.lineTo(2.26, 0.38);
   s.lineTo(2.1, SILL_Y);
   if (withArches) {
-    cutArch(s, CAR.cgToFront);
-    cutArch(s, -CAR.cgToRear);
+    cutArch(s, MODEL_FRONT_AXLE_X);
+    cutArch(s, MODEL_REAR_AXLE_X);
   }
   s.lineTo(-2.1, SILL_Y);
   s.closePath();
@@ -92,7 +90,7 @@ function bodyShape(withArches) {
 }
 
 function createWheel() {
-  const R = CAR.wheelRadius;
+  const R = MODEL_WHEEL_RADIUS;
   const pivot = new THREE.Group(); // steering
   const spin = new THREE.Group(); // rolling
   pivot.add(spin);
@@ -131,7 +129,24 @@ function createWheel() {
   return { pivot, spin };
 }
 
-export function createCarModel() {
+export function createCarModel(
+  skin = { color: 0xc1121f, metalness: 0.35, roughness: 0.3, clearcoat: 1 }
+) {
+  // Paint and tail lights belong to this car, so every car can have its own colour and brake lights.
+  // The clearcoat layer gives the glossy, smooth lacquer look.
+  const paint = new THREE.MeshPhysicalMaterial({
+    color: skin.color,
+    metalness: skin.metalness,
+    roughness: skin.roughness,
+    clearcoat: skin.clearcoat ?? 1,
+    clearcoatRoughness: 0.06,
+  });
+  const taillightMat = new THREE.MeshStandardMaterial({
+    color: 0x330000,
+    emissive: 0xff1a1a,
+    emissiveIntensity: 0.6,
+  });
+
   const root = new THREE.Group(); // world position and heading
   const bodyPivot = new THREE.Group(); // pitch and roll
   const bodyContent = new THREE.Group();
@@ -216,22 +231,35 @@ export function createCarModel() {
   bodyContent.add(eye);
 
   // Wheels stay on the ground while the body pitches and rolls.
-  const wheelX = [CAR.cgToFront, CAR.cgToFront, -CAR.cgToRear, -CAR.cgToRear];
-  const wheelZ = [-1, 1, -1, 1].map((side) => (side * CAR.track) / 2);
+  const wheelZ = [-1, 1, -1, 1].map((side) => (side * TRACK) / 2);
   const pivots = [];
   const spins = [];
   for (let i = 0; i < 4; i++) {
     const wheel = createWheel();
-    wheel.pivot.position.set(wheelX[i], CAR.wheelRadius, wheelZ[i]);
     root.add(wheel.pivot);
     pivots.push(wheel.pivot);
     spins.push(wheel.spin);
   }
 
-  // state: { x, z, yaw, steer, spin[4], pitch, roll, brake }
+  // Fits the wheels and body to the current car (wheel size, weight distribution).
+  function applyDimensions(spec) {
+    const scale = spec.wheelRadius / MODEL_WHEEL_RADIUS;
+    const wheelX = [spec.cgToFront, spec.cgToFront, -spec.cgToRear, -spec.cgToRear];
+    bodyContent.position.x = spec.cgToFront - MODEL_FRONT_AXLE_X;
+    bodyPivot.position.y = BODY_PIVOT_Y + (spec.wheelRadius - MODEL_WHEEL_RADIUS);
+    for (let i = 0; i < 4; i++) {
+      pivots[i].position.set(wheelX[i], spec.wheelRadius, wheelZ[i]);
+      spins[i].scale.set(scale, scale, 1);
+    }
+  }
+  applyDimensions(readCarSpec());
+
+  // state: { x, y, z, yaw, steer, spin[4], groundPitch, groundRoll, pitch, roll, brake }
+  // groundPitch/groundRoll come from the slope under the car; pitch/roll are the body's lean.
   function update(state) {
-    root.position.set(state.x, ROAD_SURFACE_Y, state.z);
-    root.rotation.y = -state.yaw;
+    root.position.set(state.x, state.y, state.z);
+    // Heading first, then the ground slope (pitch about Z, roll about X).
+    root.rotation.set(state.groundRoll, -state.yaw, state.groundPitch, 'YZX');
     bodyPivot.rotation.z = state.pitch; // nose up when accelerating
     bodyPivot.rotation.x = state.roll; // leans outwards in corners
     for (let i = 0; i < 4; i++) spins[i].rotation.z = -state.spin[i];
@@ -247,5 +275,21 @@ export function createCarModel() {
     eye.getWorldQuaternion(camera.quaternion);
   }
 
-  return { root, update, placeCamera };
+  function setSkin(next) {
+    paint.color.set(next.color);
+    paint.metalness = next.metalness;
+    paint.roughness = next.roughness;
+    paint.clearcoat = next.clearcoat ?? 1;
+  }
+
+  // Frees this car's meshes and its own materials when it is removed from the scene.
+  function dispose() {
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+    });
+    paint.dispose();
+    taillightMat.dispose();
+  }
+
+  return { root, update, placeCamera, applyDimensions, setSkin, dispose };
 }

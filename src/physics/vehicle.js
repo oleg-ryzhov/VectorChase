@@ -2,35 +2,24 @@
 //
 // World: forward = (cos yaw, sin yaw) in the XZ plane, right = (-sin yaw, cos yaw).
 // Body axes: u = forward speed, v = speed to the right, r = yaw rate (positive = turning right).
-// Wheel order: 0 front-left, 1 front-right, 2 rear-left, 3 rear-right. Rear-wheel drive.
+// Wheel order: 0 front-left, 1 front-right, 2 rear-left, 3 rear-right.
+// Tunable values come from the registry through readCarSpec(), once per fixed step.
 
-import { getParam } from '../config/registry.js';
+import { readCarSpec } from './spec.js';
 
 const G = 9.81;
 const AIR_DENSITY = 1.2;
 const SUBSTEPS = 6;
 const RPM_TO_RADS = (Math.PI * 2) / 60;
 const RADS_TO_RPM = 60 / (Math.PI * 2);
-
-export const CAR = {
-  cgToFront: 1.3, // m, centre of gravity to front axle
-  cgToRear: 1.4, // m, centre of gravity to rear axle
-  track: 1.6, // m, distance between left and right wheels
-  cgHeight: 0.5, // m
-  wheelRadius: 0.33, // m (0.66 m diameter)
-  wheelInertia: 1.4, // kg*m^2 per wheel, including tire and brake disc
-  yawGyration: 1.25, // m, yaw inertia = mass * gyration^2
-  dragArea: 0.64, // Cd * frontal area, m^2
-  rollingResistance: 0.013,
-  rollShareFront: 0.55, // share of lateral load transfer taken by the front axle
-  frontBrakeTorque: 1500, // N*m per wheel
-  rearBrakeTorque: 800, // N*m per wheel
-};
+export const YAW_GYRATION = 1.25; // m, yaw inertia = mass * gyration^2
+const DOWNFORCE_FRONT_SHARE = 0.4;
+const FLAT_GROUND = { groundHeight: () => 0 };
 
 // Engine and gearbox
 const IDLE_RPM = 1000;
-const REDLINE_RPM = 7500;
 const LAUNCH_RPM = 3500; // clutch slip rpm used for torque when starting from rest
+const TORQUE_CURVE_REDLINE = 7500; // the unit torque curve below ends here; it is stretched to the real redline
 const TORQUE_CURVE = [
   [1000, 0.7],
   [2000, 0.82],
@@ -41,23 +30,16 @@ const TORQUE_CURVE = [
   [7000, 0.82],
   [7500, 0.7],
 ];
-const ENGINE_BRAKING = 0.15; // fraction of peak torque at redline when off the throttle
 const GEAR_RATIOS = [3.6, 2.3, 1.65, 1.25, 1.0, 0.82];
 const REVERSE_RATIO = 3.4;
-const FINAL_DRIVE = 3.7;
 const DRIVE_EFFICIENCY = 0.92;
-const UPSHIFT_RPM = 6800;
 const DOWNSHIFT_RPM = 2800;
-const DOWNSHIFT_MAX_RPM = 6200;
 const SHIFT_TIME = 0.25; // s, torque cut during a shift
 
 // Tires
-const PEAK_SLIP_RATIO = 0.12;
-const PEAK_SLIP_TAN = 0.14; // tan of the peak slip angle (about 8 degrees)
 const CURVE_C = 1.5;
 const CURVE_B = Math.tan(Math.PI / (2 * CURVE_C)); // puts the force peak at normalized slip 1
 const CURVE_SLOPE = CURVE_B * CURVE_C;
-const LOAD_SENSITIVITY = 0.1;
 const V_MIN_LONG = 3; // m/s, lowest speed used when computing slip ratio
 const V_MIN_LAT = 2; // m/s, lowest speed used when computing slip angle
 const TRACTION_LIMIT = 0.92; // drive torque cap as a fraction of peak grip
@@ -70,8 +52,6 @@ const BRAKE_UP = 8;
 const BRAKE_DOWN = 12;
 const STEER_RATE = 3.5;
 const STEER_RETURN = 5;
-const MAX_STEER = 0.55; // rad at standstill
-const STEER_SPEED_REF = 14; // m/s, steering lock halves around this speed
 const ACCEL_FILTER = 0.06; // s, suspension-like smoothing of body accelerations
 
 function curveTorque(rpm) {
@@ -83,20 +63,20 @@ function curveTorque(rpm) {
       return t0 + ((t1 - t0) * (rpm - r0)) / (r1 - r0);
     }
   }
-  return 0; // past redline
+  return 0; // past the end of the curve
 }
 
 // Peak power of the unscaled curve, so the registry's engine power sets the real peak.
 const UNIT_PEAK_POWER = (() => {
   let best = 0;
-  for (let rpm = IDLE_RPM; rpm <= REDLINE_RPM; rpm += 10) {
+  for (let rpm = IDLE_RPM; rpm <= TORQUE_CURVE_REDLINE; rpm += 10) {
     best = Math.max(best, curveTorque(rpm) * rpm * RPM_TO_RADS);
   }
   return best;
 })();
 
-function totalRatio(gear) {
-  return gear > 0 ? GEAR_RATIOS[gear - 1] * FINAL_DRIVE : -REVERSE_RATIO * FINAL_DRIVE;
+function totalRatio(gear, finalDrive) {
+  return gear > 0 ? GEAR_RATIOS[gear - 1] * finalDrive : -REVERSE_RATIO * finalDrive;
 }
 
 function clamp(x, lo, hi) {
@@ -108,10 +88,18 @@ function approach(current, target, up, down) {
 }
 
 export class Vehicle {
-  constructor({ x = 0, z = 0, yaw = 0 } = {}) {
+  constructor({ x = 0, z = 0, yaw = 0, ground = FLAT_GROUND } = {}) {
+    this.ground = ground; // anything with groundHeight(x, z); sample(x, z) adds surface grip
     this.x = x;
     this.z = z;
     this.yaw = yaw;
+    this.y = 0; // height of the car, from the ground under the wheels
+    this.pitch = 0; // slope under the car in rad (positive = nose up)
+    this.roll = 0; // cross slope under the car in rad (positive = right side lower)
+    this.slope = 0; // sin(pitch), used for gravity along the road
+    this.surfaceGrip = [1, 1, 1, 1]; // grip under each wheel: 1 on tarmac, less on grass
+    this.surfaceDrag = 1; // rolling resistance multiplier
+    this.wheelSlip = [0, 0, 0, 0]; // how hard each tire works: 1 is peak grip, above 1 is sliding
     this.u = 0;
     this.v = 0;
     this.r = 0;
@@ -133,24 +121,59 @@ export class Vehicle {
     this._mu = [0, 0, 0, 0];
     this._fy = [0, 0, 0, 0];
 
-    this.prev = { x, z, yaw, steer: 0, spin: [0, 0, 0, 0] };
+    this.recoveries = 0; // how many times the numbers blew up and the car was reset
+
+    this._updateGround(readCarSpec());
+    this.prev = {
+      x,
+      y: this.y,
+      z,
+      yaw,
+      pitch: this.pitch,
+      roll: this.roll,
+      steer: 0,
+      spin: [0, 0, 0, 0],
+    };
   }
 
-  // controls: { forward, back, left, right } booleans
+  // controls: { forward, back, left, right } booleans,
+  // or { analog: true, throttle, brake, steer } with exact values (used by bots)
   step(dt, controls) {
     this._savePrev();
-    const m = getParam('chassis.mass');
-    const mu0 = getParam('tire.friction');
-    const enginePower = getParam('engine.power') * 1000;
+    const spec = readCarSpec();
 
-    this._updateDriver(dt, controls);
-    this._updateGearbox(dt);
+    this._updateDriver(dt, controls, spec);
+    this._updateGearbox(dt, spec);
+    this._updateGround(spec);
 
     const sub = dt / SUBSTEPS;
-    for (let i = 0; i < SUBSTEPS; i++) this._substep(sub, m, mu0, enginePower);
+    for (let i = 0; i < SUBSTEPS; i++) this._substep(sub, spec);
     for (let i = 0; i < 4; i++) this.wheelSpin[i] += this.wheelSpeed[i] * dt;
 
     if (!this._isFinite()) this._recover();
+  }
+
+  // Puts the car back on the ground at a position, standing still.
+  reset(x, z, yaw) {
+    this.x = x;
+    this.z = z;
+    this.yaw = yaw;
+    this.u = 0;
+    this.v = 0;
+    this.r = 0;
+    this.wheelSpeed.fill(0);
+    this._fy.fill(0);
+    this.wheelSlip.fill(0);
+    this.throttle = 0;
+    this.brake = 0;
+    this.steerInput = 0;
+    this.steer = 0;
+    this.gear = 1;
+    this.shiftTimer = 0;
+    this.accelX = 0;
+    this.accelY = 0;
+    this._updateGround(readCarSpec());
+    this._savePrev(); // no smearing between the old and new position when drawing
   }
 
   _savePrev() {
@@ -158,11 +181,49 @@ export class Vehicle {
     p.x = this.x;
     p.z = this.z;
     p.yaw = this.yaw;
+    p.y = this.y;
+    p.pitch = this.pitch;
+    p.roll = this.roll;
     p.steer = this.steer;
     for (let i = 0; i < 4; i++) p.spin[i] = this.wheelSpin[i];
   }
 
-  _updateDriver(dt, c) {
+  // Height, pitch, roll and surface under the four wheels.
+  _updateGround(spec) {
+    const { cgToFront: a, cgToRear: b, track } = spec;
+    const cosYaw = Math.cos(this.yaw);
+    const sinYaw = Math.sin(this.yaw);
+    const half = track / 2;
+    // px is forward of the centre of gravity, py is to the right.
+    const at = (px, py) => {
+      const x = this.x + cosYaw * px - sinYaw * py;
+      const z = this.z + sinYaw * px + cosYaw * py;
+      return this.ground.sample
+        ? this.ground.sample(x, z)
+        : { height: this.ground.groundHeight(x, z), grip: 1, drag: 1 };
+    };
+    const wheels = [at(a, -half), at(a, half), at(-b, -half), at(-b, half)];
+    const [fl, fr, rl, rr] = wheels.map((w) => w.height);
+
+    wheels.forEach((w, i) => {
+      this.surfaceGrip[i] = w.grip;
+    });
+    this.surfaceDrag = (wheels[0].drag + wheels[1].drag + wheels[2].drag + wheels[3].drag) / 4;
+
+    const rise = (fl + fr) / 2 - (rl + rr) / 2;
+    this.y = (fl + fr + rl + rr) / 4;
+    this.pitch = Math.atan2(rise, a + b);
+    this.slope = rise / Math.hypot(a + b, rise);
+    this.roll = Math.atan2((fl + rl) / 2 - (fr + rr) / 2, track);
+  }
+
+  // Average speed of the driven wheels, weighted by the front/rear drive split.
+  _driveSpeed(spec) {
+    const w = this.wheelSpeed;
+    return (1 - spec.frontBias) * ((w[2] + w[3]) / 2) + spec.frontBias * ((w[0] + w[1]) / 2);
+  }
+
+  _updateDriver(dt, c, spec) {
     let throttleTarget = 0;
     let brakeTarget = 0;
     if (c.forward && c.back) {
@@ -182,27 +243,34 @@ export class Vehicle {
         if (this.gear > 0) this.gear = -1;
       }
     }
+    if (c.analog) {
+      // Bots give exact pedal and steering values instead of key presses.
+      throttleTarget = clamp(c.throttle, 0, 1);
+      brakeTarget = clamp(c.brake, 0, 1);
+      if (this.gear < 0) this.gear = 1;
+    }
     this.throttle = approach(this.throttle, throttleTarget, THROTTLE_UP * dt, THROTTLE_DOWN * dt);
     this.brake = approach(this.brake, brakeTarget, BRAKE_UP * dt, BRAKE_DOWN * dt);
 
-    const steerTarget = (c.right ? 1 : 0) - (c.left ? 1 : 0);
+    const steerTarget = c.analog ? clamp(c.steer, -1, 1) : (c.right ? 1 : 0) - (c.left ? 1 : 0);
     const rate = steerTarget === 0 ? STEER_RETURN : STEER_RATE;
     this.steerInput = approach(this.steerInput, steerTarget, rate * dt, rate * dt);
-    this.steer = this.steerInput * (MAX_STEER / (1 + (this.u / STEER_SPEED_REF) ** 2));
+    this.steer = this.steerInput * (spec.maxSteer / (1 + (this.u / spec.steerSpeedRef) ** 2));
   }
 
-  _updateGearbox(dt) {
+  _updateGearbox(dt, spec) {
     if (this.shiftTimer > 0) this.shiftTimer = Math.max(0, this.shiftTimer - dt);
     if (this.gear < 1 || this.shiftTimer > 0) return;
 
-    const wd = (this.wheelSpeed[2] + this.wheelSpeed[3]) / 2;
-    const rpm = Math.abs(wd) * totalRatio(this.gear) * RADS_TO_RPM;
-    if (rpm > UPSHIFT_RPM && this.gear < GEAR_RATIOS.length) {
+    const rpm =
+      Math.abs(this._driveSpeed(spec)) * totalRatio(this.gear, spec.finalDrive) * RADS_TO_RPM;
+    if (rpm > spec.shiftRpm && this.gear < GEAR_RATIOS.length) {
       this.gear++;
       this.shiftTimer = SHIFT_TIME;
     } else if (this.gear > 1 && rpm < DOWNSHIFT_RPM) {
-      const lowerRpm = (rpm * totalRatio(this.gear - 1)) / totalRatio(this.gear);
-      if (lowerRpm < DOWNSHIFT_MAX_RPM) {
+      const lowerRpm =
+        (rpm * totalRatio(this.gear - 1, spec.finalDrive)) / totalRatio(this.gear, spec.finalDrive);
+      if (lowerRpm < spec.downshiftMaxRpm) {
         this.gear--;
         this.shiftTimer = SHIFT_TIME;
       }
@@ -211,28 +279,41 @@ export class Vehicle {
 
   // Largest torque a wheel can pass to the road without exceeding its grip,
   // after subtracting what the tire is already using for cornering.
-  _capacity(i, limit) {
+  _capacity(i, limit, wheelRadius) {
     const grip = this._mu[i] * this.fz[i];
     if (grip < 1) return 0;
     const used = Math.min(1, this._fy[i] / grip);
-    return limit * grip * CAR.wheelRadius * Math.max(0.2, Math.sqrt(1 - used * used));
+    return limit * grip * wheelRadius * Math.max(0.2, Math.sqrt(1 - used * used));
   }
 
-  _substep(dt, m, mu0, enginePower) {
-    const { cgToFront: a, cgToRear: b, track, cgHeight: h, wheelRadius: R, wheelInertia: I } = CAR;
+  _substep(dt, spec) {
+    const {
+      cgToFront: a,
+      cgToRear: b,
+      track,
+      cgHeight: h,
+      wheelRadius: R,
+      wheelInertia: I,
+      mass: m,
+    } = spec;
     const L = a + b;
     const w = this.wheelSpeed;
     const fz = this.fz;
     const mu = this._mu;
+    const u = this.u;
+    const v = this.v;
+    const r = this.r;
 
-    // Wheel loads: static split plus longitudinal and lateral load transfer.
+    // Wheel loads: static split, downforce, and longitudinal and lateral load transfer.
     // accelY > 0 means accelerating to the right, which loads the left wheels.
     const dLong = (m * this.accelX * h) / L;
     const dLat = (m * this.accelY * h) / track;
-    const dLatF = dLat * CAR.rollShareFront;
+    const dLatF = dLat * spec.rollShareFront;
     const dLatR = dLat - dLatF;
-    const wf = (m * G * b) / L;
-    const wr = (m * G * a) / L;
+    const downforce = 0.5 * AIR_DENSITY * spec.downforceArea * u * u;
+    const downFront = downforce * DOWNFORCE_FRONT_SHARE;
+    const wf = (m * G * b) / L + downFront;
+    const wr = (m * G * a) / L + (downforce - downFront);
     fz[0] = Math.max(0, wf / 2 - dLong / 2 + dLatF);
     fz[1] = Math.max(0, wf / 2 - dLong / 2 - dLatF);
     fz[2] = Math.max(0, wr / 2 + dLong / 2 + dLatR);
@@ -240,36 +321,44 @@ export class Vehicle {
 
     const fzNom = (m * G) / 4;
     for (let i = 0; i < 4; i++) {
-      mu[i] = mu0 * clamp(1 - LOAD_SENSITIVITY * (fz[i] / fzNom - 1), 0.6, 1.2);
+      mu[i] =
+        spec.friction * this.surfaceGrip[i] * clamp(1 - spec.loadSensitivity * (fz[i] / fzNom - 1), 0.6, 1.2);
     }
 
-    // Drivetrain: engine rpm follows the rear wheels, except while the clutch slips at launch.
-    const wd = (w[2] + w[3]) / 2;
-    const ratio = totalRatio(this.gear);
+    // Drivetrain: engine rpm follows the driven wheels, except while the clutch slips at launch.
+    const wd = this._driveSpeed(spec);
+    const ratio = totalRatio(this.gear, spec.finalDrive);
     const wheelRpm = Math.abs(wd * ratio) * RADS_TO_RPM;
     const rpm = Math.max(wheelRpm, IDLE_RPM + (LAUNCH_RPM - IDLE_RPM) * this.throttle);
     this.rpm = rpm;
 
-    const torqueScale = enginePower / UNIT_PEAK_POWER;
+    // The unit torque curve is stretched to the real redline; power scales with the stretch.
+    const redlineScale = spec.redline / TORQUE_CURVE_REDLINE;
+    const torqueScale = spec.enginePower / (UNIT_PEAK_POWER * redlineScale);
     let engineTorque = 0;
-    if (this.shiftTimer <= 0 && rpm <= REDLINE_RPM) {
-      engineTorque = this.throttle * curveTorque(rpm) * torqueScale;
+    if (this.shiftTimer <= 0 && rpm <= spec.redline) {
+      engineTorque = this.throttle * curveTorque(rpm / redlineScale) * torqueScale;
     }
     const dragTorque =
-      ENGINE_BRAKING *
+      spec.engineBraking *
       torqueScale *
       (1 - this.throttle) *
-      clamp((wheelRpm - 1100) / (REDLINE_RPM - 1100), 0, 1);
+      clamp((wheelRpm - 1100) / (spec.redline - 1100), 0, 1);
     const axleTorque =
       engineTorque * ratio * DRIVE_EFFICIENCY - Math.sign(wd) * dragTorque * Math.abs(ratio);
 
-    // Open differential: both wheels get equal torque, limited by the weaker wheel.
-    const driveCap = Math.min(this._capacity(2, TRACTION_LIMIT), this._capacity(3, TRACTION_LIMIT));
-    const driveEach = clamp(axleTorque / 2, -driveCap, driveCap);
+    // Open differential on each driven axle: equal torque, limited by the weaker wheel.
+    const frontCap = Math.min(
+      this._capacity(0, TRACTION_LIMIT, R),
+      this._capacity(1, TRACTION_LIMIT, R)
+    );
+    const rearCap = Math.min(
+      this._capacity(2, TRACTION_LIMIT, R),
+      this._capacity(3, TRACTION_LIMIT, R)
+    );
+    const driveFront = clamp((axleTorque * spec.frontBias) / 2, -frontCap, frontCap);
+    const driveRear = clamp((axleTorque * (1 - spec.frontBias)) / 2, -rearCap, rearCap);
 
-    const u = this.u;
-    const v = this.v;
-    const r = this.r;
     const cosSteer = Math.cos(this.steer);
     const sinSteer = Math.sin(this.steer);
     let sumFx = 0;
@@ -291,9 +380,10 @@ export class Vehicle {
 
       const kappa = (w[i] * R - vl) / Math.max(Math.abs(vl), V_MIN_LONG);
       const tanAlpha = vt / Math.max(Math.abs(vl), V_MIN_LAT);
-      const nx = kappa / PEAK_SLIP_RATIO;
-      const ny = tanAlpha / PEAK_SLIP_TAN;
+      const nx = kappa / spec.peakSlipRatio;
+      const ny = tanAlpha / spec.peakSlipTan;
       const slip = Math.hypot(nx, ny);
+      this.wheelSlip[i] = slip;
 
       let fxw = 0;
       let fyw = 0;
@@ -312,28 +402,29 @@ export class Vehicle {
 
       // Wheel spin: drive torque minus the road's reaction, then brakes.
       // The reaction is stiff at low speed, so the update is damped by its linear stiffness.
-      const drive = front ? 0 : driveEach;
+      const drive = front ? driveFront : driveRear;
       const stiffness =
-        (((mu[i] * fz[i] * CURVE_SLOPE) / PEAK_SLIP_RATIO) * R * R) /
+        (((mu[i] * fz[i] * CURVE_SLOPE) / spec.peakSlipRatio) * R * R) /
         (Math.max(Math.abs(vl), V_MIN_LONG) * I);
       let wn = w[i] + (dt * (drive - fxw * R)) / I / (1 + dt * stiffness);
 
       const brakeTorque = Math.min(
-        this.brake * (front ? CAR.frontBrakeTorque : CAR.rearBrakeTorque),
-        this._capacity(i, BRAKE_LIMIT)
+        this.brake * (front ? spec.frontBrakeTorque : spec.rearBrakeTorque),
+        this._capacity(i, BRAKE_LIMIT, R)
       );
       const dw = (dt * brakeTorque) / I;
       wn = Math.abs(wn) <= dw ? 0 : wn - Math.sign(wn) * dw;
       w[i] = wn;
     }
 
-    // Body: tire forces plus air and rolling resistance.
-    const aero = -0.5 * AIR_DENSITY * CAR.dragArea * u * Math.abs(u);
-    const rolling = -CAR.rollingResistance * m * G * Math.tanh(u / 0.5);
-    const fxTotal = sumFx + aero + rolling;
-    const izz = m * CAR.yawGyration * CAR.yawGyration;
+    // Body: tire forces plus air and rolling resistance, and gravity along the slope.
+    const aero = -0.5 * AIR_DENSITY * spec.dragArea * u * Math.abs(u);
+    const rolling = -spec.rollingResistance * this.surfaceDrag * m * G * Math.tanh(u / 0.5);
+    const fxBody = sumFx + aero + rolling;
+    const gravity = -m * G * this.slope; // pulls the car back uphill and forward downhill
+    const izz = m * YAW_GYRATION * YAW_GYRATION;
 
-    this.u += (fxTotal / m + r * v) * dt;
+    this.u += ((fxBody + gravity) / m + r * v) * dt;
     this.v += (sumFy / m - r * u) * dt;
     this.r += (moment / izz) * dt;
 
@@ -344,7 +435,7 @@ export class Vehicle {
     this.yaw += this.r * dt;
 
     const k = 1 - Math.exp(-dt / ACCEL_FILTER);
-    this.accelX += (fxTotal / m - this.accelX) * k;
+    this.accelX += (fxBody / m - this.accelX) * k;
     this.accelY += (sumFy / m - this.accelY) * k;
   }
 
@@ -355,6 +446,7 @@ export class Vehicle {
 
   // Safety net: if the numbers ever blow up, stop the car where it was.
   _recover() {
+    this.recoveries++;
     this.x = this.prev.x;
     this.z = this.prev.z;
     this.yaw = this.prev.yaw;
@@ -363,6 +455,7 @@ export class Vehicle {
     this.r = 0;
     this.wheelSpeed.fill(0);
     this._fy.fill(0);
+    this.wheelSlip.fill(0);
     this.accelX = 0;
     this.accelY = 0;
     this.throttle = 0;

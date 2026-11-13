@@ -44,6 +44,7 @@ export function buildTrack(control, options = {}) {
       const t = k / DENSE_PER_SEGMENT;
       dense.push({
         x: catmullRom(p0.x, p1.x, p2.x, p3.x, t),
+        y: catmullRom(p0.y ?? 0, p1.y ?? 0, p2.y ?? 0, p3.y ?? 0, t),
         z: catmullRom(p0.z, p1.z, p2.z, p3.z, t),
       });
     }
@@ -75,12 +76,14 @@ export function buildTrack(control, options = {}) {
     points.push({
       s,
       x: a.x + (b.x - a.x) * f,
+      y: a.y + (b.y - a.y) * f,
       z: a.z + (b.z - a.z) * f,
       tx: 0,
       tz: 0,
       nx: 0,
       nz: 0,
       curvature: 0,
+      grade: 0,
       width,
     });
   }
@@ -105,6 +108,13 @@ export function buildTrack(control, options = {}) {
   for (let i = 0; i < count; i++) {
     const dTheta = wrapAngle(heading[(i + 1) % count] - heading[(i - 1 + count) % count]);
     points[i].curvature = dTheta / (2 * step);
+  }
+
+  // 5b. Grade = rise over horizontal distance, from neighbouring points.
+  for (let i = 0; i < count; i++) {
+    const prev = points[(i - 1 + count) % count];
+    const next = points[(i + 1) % count];
+    points[i].grade = (next.y - prev.y) / (2 * step);
   }
 
   // 6. Checkpoints, roughly every checkpointEvery metres. Index 0 is the start line.

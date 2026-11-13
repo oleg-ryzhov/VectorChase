@@ -4,13 +4,24 @@
 
 const PREVENT_DEFAULT = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
+// Keys typed into text fields belong to the field, not the game.
+function isTextEntry(el) {
+  return el instanceof Element && el.matches('input[type="text"], input[type="number"], textarea, select');
+}
+
+// Arrow keys and Space must keep working inside sliders and buttons.
+function isFormControl(el) {
+  return el instanceof Element && el.matches('input, textarea, select, button');
+}
+
 export class Input {
   constructor(target = window) {
     this.down = new Set();
     this.pressed = new Set();
 
     target.addEventListener('keydown', (e) => {
-      if (PREVENT_DEFAULT.has(e.code)) e.preventDefault();
+      if (isTextEntry(e.target)) return;
+      if (PREVENT_DEFAULT.has(e.code) && !isFormControl(e.target)) e.preventDefault();
       if (!e.repeat) this.pressed.add(e.code);
       this.down.add(e.code);
     });
