@@ -89,3 +89,15 @@ test('physics stays finite under random input', () => {
   }
   assert.ok(Math.abs(car.u) < 100);
 });
+
+test('tire slip is low when cruising and high when sliding sideways', () => {
+  resetAll();
+  const cruising = rolling(20, 3);
+  run(cruising, 0.5, NONE);
+  assert.ok(cruising.wheelSlip.every((s) => Number.isFinite(s) && s < 0.5), `slip ${cruising.wheelSlip}`);
+
+  const sliding = rolling(20, 3);
+  sliding.v = 6; // moving sideways at 6 m/s
+  run(sliding, 0.1, NONE);
+  assert.ok(Math.max(...sliding.wheelSlip) > 0.8, `slip ${sliding.wheelSlip}`);
+});

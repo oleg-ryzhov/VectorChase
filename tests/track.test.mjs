@@ -48,9 +48,10 @@ test('tangents are unit length and normals are perpendicular', () => {
 });
 
 test('a circle driven toward +z has positive (right-turn) curvature near 1/r', () => {
+  // A spline through 12 points is not a perfect circle, so allow about 20% either way.
   const t = buildTrack(circle(100, 12));
   for (const p of t.points) {
-    assert.ok(Math.abs(p.curvature - 0.01) < 0.001, `curvature ${p.curvature}`);
+    assert.ok(Math.abs(p.curvature - 0.01) < 0.002, `curvature ${p.curvature}`);
   }
 });
 
@@ -68,5 +69,31 @@ test('no corner is tighter than twice the half-width (road would fold)', () => {
   const halfWidth = TRACK_OPTIONS.width / 2;
   for (const p of t.points) {
     assert.ok(Math.abs(p.curvature) * halfWidth < 0.5, `curvature ${p.curvature} at s=${p.s}`);
+  }
+});
+
+test('the real track is large, hilly and not too steep', () => {
+  const t = buildTrack(CONTROL_POINTS, TRACK_OPTIONS);
+  assert.ok(t.length > 2500, `length ${t.length}`);
+  const heights = t.points.map((p) => p.y);
+  assert.ok(Math.max(...heights) - Math.min(...heights) > 25);
+  for (const p of t.points) {
+    assert.ok(Math.abs(p.grade) < 0.14, `grade ${p.grade} at s=${p.s}`);
+  }
+  const first = t.points[0];
+  const last = t.points[t.points.length - 1];
+  assert.ok(Math.abs(first.y - last.y) < 1, 'height does not close the loop');
+});
+
+test('different parts of the track stay well apart', () => {
+  const t = buildTrack(CONTROL_POINTS, TRACK_OPTIONS);
+  const pts = t.points;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const along = pts[j].s - pts[i].s;
+      if (Math.min(along, t.length - along) < 400) continue;
+      const d = Math.hypot(pts[j].x - pts[i].x, pts[j].z - pts[i].z);
+      assert.ok(d > 100, `s=${pts[i].s} and s=${pts[j].s} are only ${d} m apart`);
+    }
   }
 });

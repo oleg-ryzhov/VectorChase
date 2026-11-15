@@ -1,8 +1,8 @@
 import * as THREE from 'three';
+import { WALL_GAP, WALL_HEIGHT } from './world.js';
 
-const ROAD_Y = 0.05;
-const WALL_HEIGHT = 1.2;
-const WALL_GAP = 0.3; // distance from the road edge to the wall
+const START_LINE_LIFT = 0.03;
+const DEBUG_LIFT = 0.1;
 
 function geometryFromPoints(pts) {
   const g = new THREE.BufferGeometry();
@@ -32,8 +32,8 @@ function buildRoad(track) {
   const positions = new Float32Array(n * 6);
   for (let i = 0; i < n; i++) {
     const p = points[i];
-    positions.set([p.x + p.nx * hw, ROAD_Y, p.z + p.nz * hw], i * 6);
-    positions.set([p.x - p.nx * hw, ROAD_Y, p.z - p.nz * hw], i * 6 + 3);
+    positions.set([p.x + p.nx * hw, p.y, p.z + p.nz * hw], i * 6);
+    positions.set([p.x - p.nx * hw, p.y, p.z - p.nz * hw], i * 6 + 3);
   }
   return new THREE.Mesh(
     buildStrip(positions, n),
@@ -51,8 +51,8 @@ function buildWall(track, side) {
     const p = points[i];
     const x = p.x + p.nx * offset;
     const z = p.z + p.nz * offset;
-    positions.set([x, ROAD_Y, z], i * 6);
-    positions.set([x, ROAD_Y + WALL_HEIGHT, z], i * 6 + 3);
+    positions.set([x, p.y, z], i * 6);
+    positions.set([x, p.y + WALL_HEIGHT, z], i * 6 + 3);
   }
   return new THREE.Mesh(
     buildStrip(positions, n),
@@ -63,21 +63,19 @@ function buildWall(track, side) {
 function buildStartLine(track) {
   const p = track.points[0];
   const hw = track.width / 2;
-  const y = ROAD_Y + 0.02;
-  const corner = (side, along) => new THREE.Vector3(
-    p.x + p.nx * hw * side + p.tx * along,
-    y,
-    p.z + p.nz * hw * side + p.tz * along
-  );
+  const corner = (side, along) =>
+    new THREE.Vector3(
+      p.x + p.nx * hw * side + p.tx * along,
+      p.y + p.grade * along + START_LINE_LIFT,
+      p.z + p.nz * hw * side + p.tz * along
+    );
   const rightBack = corner(1, -1);
   const rightFront = corner(1, 1);
   const leftBack = corner(-1, -1);
   const leftFront = corner(-1, 1);
 
-  const geo = new THREE.BufferGeometry();
-  geo.setFromPoints([rightBack, rightFront, leftBack, leftBack, rightFront, leftFront]);
   return new THREE.Mesh(
-    geo,
+    geometryFromPoints([rightBack, rightFront, leftBack, leftBack, rightFront, leftFront]),
     new THREE.MeshBasicMaterial({
       color: 0xffffff,
       side: THREE.DoubleSide,
@@ -97,21 +95,20 @@ export function buildTrackMesh(track) {
   return group;
 }
 
-// Racing line (yellow) and checkpoint gates (green).
+// Racing line (yellow) and checkpoint gates (green). Not used by the game right now.
 export function buildDebugOverlay(track) {
   const group = new THREE.Group();
-  const y = ROAD_Y + 0.1;
   const hw = track.width / 2;
 
-  const line = track.points.map((p) => new THREE.Vector3(p.x, y, p.z));
+  const line = track.points.map((p) => new THREE.Vector3(p.x, p.y + DEBUG_LIFT, p.z));
   group.add(new THREE.LineLoop(geometryFromPoints(line), new THREE.LineBasicMaterial({ color: 0xffd166 })));
 
   const gates = [];
   for (const cp of track.checkpoints) {
     const p = track.points[cp.index];
     gates.push(
-      new THREE.Vector3(p.x + p.nx * hw, y, p.z + p.nz * hw),
-      new THREE.Vector3(p.x - p.nx * hw, y, p.z - p.nz * hw)
+      new THREE.Vector3(p.x + p.nx * hw, p.y + DEBUG_LIFT, p.z + p.nz * hw),
+      new THREE.Vector3(p.x - p.nx * hw, p.y + DEBUG_LIFT, p.z - p.nz * hw)
     );
   }
   group.add(new THREE.LineSegments(geometryFromPoints(gates), new THREE.LineBasicMaterial({ color: 0x06d6a0 })));

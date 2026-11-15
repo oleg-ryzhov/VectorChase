@@ -3,10 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Vector Chase</title>
+    <title>VectorChase</title>
+    <meta name="theme-color" content="#0a0d14" />
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
-      canvas { display: block; }
+      canvas { display: block; outline: none; }
+      #load-error {
+        position: fixed; left: 50%; top: 40%; transform: translateX(-50%);
+        max-width: 80vw; padding: 14px 18px; border-radius: 8px;
+        background: rgba(20, 0, 0, 0.9); color: #ffb4b4; font-size: 14px; display: none; z-index: 100;
+      }
       #hud {
         position: fixed; top: 8px; left: 8px;
         color: #fff; background: rgba(0, 0, 0, 0.45);
@@ -24,6 +30,25 @@
   </head>
   <body>
     <div id="hud"></div>
+    <div id="load-error"></div>
+    <noscript>VectorChase needs JavaScript.</noscript>
+    <script>
+      // If a file fails to load or the game crashes on start, say so instead of showing a black page.
+      (function () {
+        var box = document.getElementById('load-error');
+        function show(text) {
+          box.style.display = 'block';
+          box.textContent = text + ' (press F12 for details. If this is a hosted copy, check that every file was uploaded.)';
+        }
+        window.addEventListener('error', function (e) {
+          var t = e.target;
+          show(t && (t.src || t.href) ? 'Could not load ' + (t.src || t.href) : 'Error: ' + e.message);
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          show('Error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+        });
+      })();
+    </script>
     <script type="module" src="src/main.js"></script>
   </body>
 </html>
