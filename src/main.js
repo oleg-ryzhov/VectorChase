@@ -33,6 +33,9 @@ const FULL_SPEED = 60; // m/s at which the boost is complete
 const CHASE_DISTANCE = 8;
 const CHASE_HEIGHT = 3;
 const ORBIT_RADIUS = 7.5;
+const CHASE_LOOK_AHEAD = 4; // m past the car that the chase cameras aim at
+const VIEW_BLEND_SECONDS = 0.35; // smooth switch between first-person, chase and rear views
+const CAMERA_MODES = ['first', 'chase', 'rear'];
 const ORBIT_HEIGHT = 2.4;
 const PITCH_PER_ACCEL = 0.0035; // rad of body pitch per m/s^2
 const ROLL_PER_ACCEL = 0.004; // rad of body roll per m/s^2
@@ -51,7 +54,6 @@ const STUCK_SECONDS = 4;
 const OFF_ROAD_SECONDS = 6;
 
 const hud = document.getElementById('hud');
-const ROOF_PIVOT_HEIGHT = 1.7; // free-look orbits this far above the ground under the car
 
 function getStorage() {
   try {
@@ -115,12 +117,11 @@ const effects = createEffects(scene, world);
 
 const input = new Input();
 const stepper = new FixedStepper(1 / 120, 8);
-const controls = { forward: false, back: false, left: false, right: false, handbrake: false, boost: false };
+const controls = { forward: false, back: false, left: false, right: false, handbrake: false };
 const settingsMenu = createSettingsMenu();
 const raceUi = createRaceUi();
 const hudPanel = createHud(track);
 const style = new StyleTracker();
-let boostHeld = false;
 
 // ---- Entrants -------------------------------------------------------------------------
 
@@ -297,11 +298,16 @@ const isRacing = () => race !== null && (race.phase === 'countdown' || race.phas
 // ---- Frame loop -----------------------------------------------------------------------
 
 let cameraMode = 'first';
-let view = 'orbit'; // 'first', 'chase' or 'orbit' (menu and results)
+let view = 'orbit'; // 'first', 'chase', 'rear' or 'orbit' (menu and results)
 let chaseYaw = player.car.yaw;
 let chaseY = player.car.y + CHASE_HEIGHT;
 let orbitAngle = 0;
 let lastRender = performance.now();
+let lastView = null;
+let blend = 1; // 0..1 progress of the current view change
+const blendFrom = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+const blendTo = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+const lastPose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
 
 function limitAngle(angle) {
   return Math.max(-MAX_BODY_ANGLE, Math.min(MAX_BODY_ANGLE, angle));
@@ -312,10 +318,9 @@ function beforeFrame(frameDt) {
   if (!isRacing() && settingsMenu.isOpen) settingsMenu.close();
   if (isRacing() && input.wasPressed('KeyE')) settingsMenu.toggle();
   if (isRacing() && !settingsMenu.isOpen && input.wasPressed('KeyC')) {
-    cameraMode = cameraMode === 'first' ? 'chase' : 'first';
+    cameraMode = CAMERA_MODES[(CAMERA_MODES.indexOf(cameraMode) + 1) % CAMERA_MODES.length];
   }
   const driving = race !== null && race.phase === 'racing' && !settingsMenu.isOpen;
-  if (driving && input.wasPressed('KeyR')) respawn(player);
 
   // The car is released while the settings menu is open.
   controls.forward = driving && (input.isDown('KeyW') || input.isDown('ArrowUp'));
@@ -324,7 +329,6 @@ function beforeFrame(frameDt) {
   controls.right = driving && (input.isDown('KeyD') || input.isDown('ArrowRight'));
 
   controls.handbrake = driving && input.isDown('Space');
-  boostHeld = driving && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
 
   // Time slows down while the settings menu is open and eases back afterwards.
   const target = settingsMenu.isOpen ? MENU_TIME_SCALE : 1;
@@ -342,7 +346,6 @@ function fixedUpdate(dt) {
   if (race.phase !== 'racing') return;
 
   const spec = readCarSpec();
-  controls.boost = style.boosting;
   for (const e of entrants) {
     e.car.step(dt, e.isPlayer ? controls : e.driver.drive(e.car, e.tracker, spec));
   }
@@ -361,7 +364,7 @@ function fixedUpdate(dt) {
     if (lost > SPARK_SPEED_LOSS) effects.spark(e.car.x, e.car.y + 0.5, e.car.z, Math.min(30, Math.round(lost * 3)));
   });
 
-  style.update(dt, player.car, { boostHeld, crashed: playerCrashed });
+  style.update(dt, player.car, { crashed: playerCrashed });
 
   for (const e of entrants) {
     e.tracker.update(e.car.x, e.car.z);
@@ -414,14 +417,15 @@ function render(alpha) {
   const racing = isRacing();
   look.update(frameDt);
   view = racing ? cameraMode : 'orbit';
-  if (racing && look.engaged) view = 'look';
+  // Free look orbits from the chase pose (the rear pose when that is the chosen view).
+  if (racing && look.engaged && view === 'first') view = 'chase';
 
   // Speed widens the field of view; the change is smoothed so it never pops.
   const speedFactor = Math.min(1, Math.abs(player.car.u) / FULL_SPEED);
   const targetFov =
     view === 'first'
       ? FIRST_PERSON_FOV + SPEED_FOV_BOOST * speedFactor
-      : CHASE_FOV + (view === 'chase' ? SPEED_FOV_BOOST * speedFactor : 0);
+      : CHASE_FOV + (view === 'orbit' ? 0 : SPEED_FOV_BOOST * speedFactor);
   const nextFov = camera.fov + (targetFov - camera.fov) * (1 - Math.exp(-frameDt * 6));
   if (Math.abs(nextFov - camera.fov) > 0.005) {
     camera.fov = nextFov;
@@ -434,20 +438,24 @@ function render(alpha) {
 
   if (view === 'first') {
     player.model.placeCamera(camera);
-  } else if (view === 'chase') {
-    const cx = Math.cos(chaseYaw);
-    const cz = Math.sin(chaseYaw);
+  } else if (view === 'chase' || view === 'rear') {
+    // The rear view is the chase view turned around: the camera sits ahead of the car and looks back.
+    // Free look orbits the same pivot, so with no offset it is exactly this pose.
+    const heading = chaseYaw + (view === 'rear' ? Math.PI : 0);
     const distance = CHASE_DISTANCE + 3 * speedFactor;
-    const camX = me.x - cx * distance;
-    const camZ = me.z - cz * distance;
-    // Stay above the hill behind the car.
-    camera.position.set(camX, Math.max(chaseY, world.groundHeight(camX, camZ) + 1.5), camZ);
-    camera.lookAt(me.x + cx * 4, me.y + 1.0, me.z + cz * 4);
-  } else if (view === 'look') {
-    const pivot = { x: me.x, y: me.y + ROOF_PIVOT_HEIGHT, z: me.z };
-    const p = look.position(pivot, me.yaw);
-    camera.position.set(p.x, Math.max(p.y, world.groundHeight(p.x, p.z) + 0.8), p.z);
-    camera.lookAt(pivot.x, pivot.y, pivot.z);
+    const rise = chaseY - (me.y + 1.0);
+    const o = look.orbit(heading + Math.PI, Math.atan2(rise, distance), Math.hypot(distance, rise));
+    const flat = o.radius * Math.cos(o.pitch);
+    const camX = me.x + flat * Math.cos(o.angle);
+    const camZ = me.z + flat * Math.sin(o.angle);
+    const camY = me.y + 1.0 + o.radius * Math.sin(o.pitch);
+    // Stay above the hill under the camera.
+    camera.position.set(camX, Math.max(camY, world.groundHeight(camX, camZ) + 1.5), camZ);
+    camera.lookAt(
+      me.x - CHASE_LOOK_AHEAD * Math.cos(o.angle),
+      me.y + 1.0,
+      me.z - CHASE_LOOK_AHEAD * Math.sin(o.angle)
+    );
   } else {
     const camX = me.x + Math.cos(orbitAngle) * ORBIT_RADIUS;
     const camZ = me.z + Math.sin(orbitAngle) * ORBIT_RADIUS;
@@ -455,12 +463,32 @@ function render(alpha) {
     camera.lookAt(me.x, me.y + 0.8, me.z);
   }
 
+  // Changing view blends from the last camera pose instead of jumping.
+  if (view !== lastView) {
+    if (lastView !== null) {
+      blendFrom.pos.copy(lastPose.pos);
+      blendFrom.quat.copy(lastPose.quat);
+      blend = 0;
+    }
+    lastView = view;
+  }
+  if (blend < 1) {
+    blend = Math.min(1, blend + frameDt / VIEW_BLEND_SECONDS);
+    const k = blend * blend * (3 - 2 * blend);
+    blendTo.pos.copy(camera.position);
+    blendTo.quat.copy(camera.quaternion);
+    camera.position.lerpVectors(blendFrom.pos, blendTo.pos, k);
+    camera.quaternion.copy(blendFrom.quat).slerp(blendTo.quat, k);
+  }
+  lastPose.pos.copy(camera.position);
+  lastPose.quat.copy(camera.quaternion);
+
   effects.update(frameDt, entrants, camera, renderer.domElement.height);
   renderer.render(scene, camera);
 
   hud.hidden = !racing;
   if (racing) hud.textContent =
-      'W/S gas/brake · A/D steer · Space handbrake · Shift boost · drag mouse to look · C camera · R to road · E settings';
+      'W/S gas/brake · A/D steer · Space handbrake · drag mouse to look · C camera · E settings';
 
   hudPanel.setVisible(racing);
   if (racing) {
@@ -469,8 +497,6 @@ function render(alpha) {
       gear: player.car.gear < 0 ? 'R' : String(player.car.gear),
       rpm: player.car.rpm,
       redline: readCarSpec().redline,
-      boost: style.meter,
-      boosting: style.boosting,
       driftText:
         style.driftPoints > 0
           ? `DRIFT ${Math.round(style.driftPoints)} ×${style.multiplier}`

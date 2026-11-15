@@ -1,12 +1,10 @@
-// Drift scoring, combo and boost meter. Pure logic: no DOM or Three.js imports.
+// Drift scoring and combo. Pure logic: no DOM or Three.js imports.
 
 const MIN_SPEED = 10; // m/s
 const MIN_ANGLE = 0.17; // rad (about 10 degrees) of sideways slide to count as a drift
 const MAX_ANGLE = 1.3;
 const BANK_AFTER = 1; // s of drifting needed before points are kept
 const IDLE_TO_BANK = 0.4; // s without drifting that ends a drift
-const FILL_RATE = 0.12; // boost meter per second of drifting (about 8 s fills it)
-const BOOST_SECONDS = 3; // a full meter lasts this long
 
 export class StyleTracker {
   constructor() {
@@ -14,8 +12,6 @@ export class StyleTracker {
   }
 
   reset() {
-    this.meter = 0; // boost, 0..1
-    this.boosting = false;
     this.driftPoints = 0;
     this.combo = 0; // seconds of the current drift
     this.multiplier = 1;
@@ -27,7 +23,7 @@ export class StyleTracker {
   }
 
   // car: { u, v, wheelSlip }. crashed: the car hit something hard this step.
-  update(dt, car, { boostHeld = false, crashed = false } = {}) {
+  update(dt, car, { crashed = false } = {}) {
     this.popup = Math.max(0, this.popup - dt);
     const speed = Math.hypot(car.u, car.v);
     const angle = Math.abs(Math.atan2(car.v, Math.max(car.u, 0.001)));
@@ -42,7 +38,6 @@ export class StyleTracker {
       this.combo += dt;
       this.multiplier = Math.min(5, 1 + Math.floor(this.combo));
       this.driftPoints += dt * speed * angle * 8 * this.multiplier;
-      this.meter = Math.min(1, this.meter + dt * FILL_RATE);
     } else if (this.driftPoints > 0) {
       this.idle += dt;
       if (this.idle > IDLE_TO_BANK) {
@@ -59,8 +54,5 @@ export class StyleTracker {
         this.idle = 0;
       }
     }
-
-    this.boosting = boostHeld && this.meter > 0;
-    if (this.boosting) this.meter = Math.max(0, this.meter - dt / BOOST_SECONDS);
   }
 }

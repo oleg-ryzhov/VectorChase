@@ -54,10 +54,6 @@ export function readCarSpec() {
     frontBrakeTorque: (brakeTotal * brakeBias) / 2,
     rearBrakeTorque: (brakeTotal * (1 - brakeBias)) / 2,
 
-    assistStability: getParam('assist.stability') / 100,
-    assistCountersteer: getParam('assist.countersteer') / 100,
-    boostPower: getParam('assist.boost') / 100,
-
     maxSteer: getParam('steering.maxAngle') * DEG,
     steerSpeedRef: getParam('steering.speedRef'),
   };

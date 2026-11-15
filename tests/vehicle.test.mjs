@@ -233,66 +233,11 @@ test('tire slip is low when cruising and high when sliding sideways', () => {
   assert.ok(Math.max(...sliding.wheelSlip) > 0.8, `slip ${sliding.wheelSlip}`);
 });
 
-test('stability and countersteer assists end a spin faster than no assists', () => {
-  function spinOut(assist) {
-    resetAll();
-    if (!assist) {
-      setParam('assist.stability', 0);
-      setParam('assist.countersteer', 0);
-    }
-    const car = rolling(25, 3);
-    car.v = -9; // already sliding hard
-    car.r = 1.6;
-    run(car, 3, FORWARD);
-    const result = Math.abs(car.r) + Math.abs(Math.atan2(car.v, car.u));
-    resetAll();
-    return result;
-  }
-  assert.ok(spinOut(true) < spinOut(false), `assist ${spinOut(true)} none ${spinOut(false)}`);
-});
-
-test('handbrake loosens the rear and boost adds speed', () => {
+test('handbrake loosens the rear', () => {
   resetAll();
   const grippy = rolling(25, 3);
   const braked = rolling(25, 3);
   run(grippy, 1, { ...FORWARD, right: true });
   run(braked, 1, { ...FORWARD, right: true, handbrake: true });
   assert.ok(Math.abs(braked.v) > Math.abs(grippy.v), `braked ${braked.v} grippy ${grippy.v}`);
-  const plain = new Vehicle();
-  const boosted = new Vehicle();
-  run(plain, 6, FORWARD);
-  run(boosted, 6, { ...FORWARD, boost: true });
-  assert.ok(boosted.u > plain.u, `boosted ${boosted.u} plain ${plain.u}`);
-});
-
-test('stability and countersteer assists end a spin faster than no assists', () => {
-  function spinOut(assist) {
-    resetAll();
-    if (!assist) {
-      setParam('assist.stability', 0);
-      setParam('assist.countersteer', 0);
-    }
-    const car = rolling(25, 3);
-    car.v = -9; // already sliding hard
-    car.r = 1.6;
-    run(car, 3, FORWARD);
-    const result = Math.abs(car.r) + Math.abs(Math.atan2(car.v, car.u));
-    resetAll();
-    return result;
-  }
-  assert.ok(spinOut(true) < spinOut(false), `assist ${spinOut(true)} none ${spinOut(false)}`);
-});
-
-test('handbrake loosens the rear and boost adds speed', () => {
-  resetAll();
-  const grippy = rolling(25, 3);
-  const braked = rolling(25, 3);
-  run(grippy, 1, { ...FORWARD, right: true });
-  run(braked, 1, { ...FORWARD, right: true, handbrake: true });
-  assert.ok(Math.abs(braked.v) > Math.abs(grippy.v), `braked ${braked.v} grippy ${grippy.v}`);
-  const plain = new Vehicle();
-  const boosted = new Vehicle();
-  run(plain, 6, FORWARD);
-  run(boosted, 6, { ...FORWARD, boost: true });
-  assert.ok(boosted.u > plain.u, `boosted ${boosted.u} plain ${plain.u}`);
 });

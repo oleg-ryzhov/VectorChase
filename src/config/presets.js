@@ -83,7 +83,7 @@ export const BUILTIN_PRESETS = [
   { name: 'Grippy', values: { 'tire.friction': 1.8, 'tire.peakSlipAngle': 11, 'aero.downforce': 1.2 } },
   {
     name: 'Drift',
-    values: { 'engine.power': 400, 'tire.friction': 1.1, 'steering.maxAngle': 40, 'assist.countersteer': 90, 'assist.stability': 30 },
+    values: { 'engine.power': 400, 'tire.friction': 1.1, 'steering.maxAngle': 40 },
   },
   {
     name: 'Rocket',

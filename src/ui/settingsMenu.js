@@ -23,6 +23,10 @@ const STYLE = `
 .sm-quick{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
 .sm-quick button{flex:1;min-width:64px}
 .sm-search{width:100%;margin:6px 0}
+.sm-tabs{display:flex;gap:6px;margin:8px 0}
+.sm-tabs button{flex:1}
+#settings-menu .sm-tabs button.on{background:#3d5a99;border-color:#6e8fd8}
+.sm-pane[hidden]{display:none}
 .sm-group{border-top:1px solid #222a3a;margin-top:6px}
 .sm-group>summary{cursor:pointer;padding:10px 2px;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8fb8e8;list-style:none}
 .sm-group>summary::before{content:'▸ '}
@@ -149,7 +153,7 @@ export function createSettingsMenu() {
   const header = el('div', 'sm-header');
   const closeButton = button('✕', 'Close (E)');
   header.append(el('h2', '', 'Car settings'), closeButton);
-  panel.append(header, el('p', 'sm-hint', 'Pick a quick setup or tune a value. Changed values turn yellow. E closes this.'));
+  panel.append(header, el('p', 'sm-hint', 'Pick a quick setup or tune the basics. Advanced has everything else. Changed values turn yellow. E closes this.'));
 
   const quick = el('div', 'sm-quick');
   for (const preset of BUILTIN_PRESETS) {
@@ -162,27 +166,48 @@ export function createSettingsMenu() {
   }
   panel.append(quick);
 
+  // Tabs: the few settings most people want are on Basic, everything else is under Advanced.
+  const tabBar = el('div', 'sm-tabs');
+  const tabs = {};
+  const panes = {};
+  function showTab(name) {
+    for (const key of Object.keys(panes)) {
+      panes[key].hidden = key !== name;
+      tabs[key].classList.toggle('on', key === name);
+    }
+  }
+  function addTab(key, text, pane) {
+    const b = button(text);
+    b.addEventListener('click', () => showTab(key));
+    tabs[key] = b;
+    panes[key] = pane;
+    pane.classList.add('sm-pane');
+    tabBar.append(b);
+  }
+
+  const basicPane = el('div');
+  for (const def of PARAMS) if (def.basic) basicPane.append(createRow(def));
+
+  const advancedPane = el('div');
   const search = el('input', 'sm-search');
   search.type = 'text';
-  search.placeholder = 'Search settings (grip, power, brake...)';
-  panel.append(search, status);
+  search.placeholder = 'Search advanced settings (slip, gearing, aero...)';
+  advancedPane.append(search);
 
   // One collapsible section per group, in the order groups first appear in the registry.
   const groups = new Map();
   for (const def of PARAMS) {
+    if (def.basic) continue;
     if (!groups.has(def.group)) groups.set(def.group, []);
     groups.get(def.group).push(def);
   }
-  let first = true;
   for (const [name, defs] of groups) {
     const box = el('details', 'sm-group');
-    box.open = first;
-    first = false;
     box.append(el('summary', '', name));
     const items = defs.map((def) => ({ def, row: createRow(def) }));
     items.forEach((i) => box.append(i.row));
     groupBoxes.push({ box, items, wasOpen: box.open });
-    panel.append(box);
+    advancedPane.append(box);
   }
 
   // Searching shows only matching settings and opens their sections.
@@ -201,8 +226,7 @@ export function createSettingsMenu() {
   });
 
   // My presets
-  const mine = el('details', 'sm-group');
-  mine.append(el('summary', '', 'My presets'));
+  const mine = el('div');
   const resetAllButton = button('Reset everything to stock');
   const nameInput = el('input');
   nameInput.type = 'text';
@@ -219,7 +243,11 @@ export function createSettingsMenu() {
   const resetBar = el('div', 'sm-bar');
   resetBar.append(resetAllButton);
   mine.append(saveBar, loadBar, resetBar);
-  panel.append(mine);
+  addTab('basic', 'Basic', basicPane);
+  addTab('advanced', 'Advanced', advancedPane);
+  addTab('presets', 'Presets', mine);
+  panel.append(tabBar, status, basicPane, advancedPane, mine);
+  showTab('basic');
 
   function refreshPresetList(selectName) {
     const store = getStorage();

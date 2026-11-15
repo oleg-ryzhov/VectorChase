@@ -10,8 +10,6 @@ const STYLE = `
 .dash-gear{position:absolute;left:14px;top:8px;font-size:30px;font-weight:700;color:#ffd166}
 .dash-rpm{margin-top:8px;height:8px;background:rgba(255,255,255,.2);border-radius:4px;overflow:hidden}
 .dash-rpm-fill{height:100%;width:0;background:#7bd88f}
-.dash-boost{margin-top:6px;height:8px;background:rgba(255,255,255,.2);border-radius:4px;overflow:hidden}
-.dash-boost-fill{height:100%;width:0;background:#4cc9f0}
 #drift{position:fixed;top:95px;left:50%;transform:translateX(-50%);color:#ffd166;font:700 26px system-ui,sans-serif;text-shadow:0 2px 10px rgba(0,0,0,.7);z-index:5;pointer-events:none;white-space:nowrap}
 #minimap{position:fixed;top:10px;right:10px;width:200px;height:150px;z-index:5;pointer-events:none}
 #minimap[hidden]{display:none}
@@ -37,10 +35,7 @@ export function createHud(track) {
   const rpmBar = el('div', 'dash-rpm');
   const rpmFill = el('div', 'dash-rpm-fill');
   rpmBar.append(rpmFill);
-  const boostBar = el('div', 'dash-boost');
-  const boostFill = el('div', 'dash-boost-fill');
-  boostBar.append(boostFill);
-  dash.append(gear, speed, el('div', 'dash-unit', 'km/h'), rpmBar, boostBar);
+  dash.append(gear, speed, el('div', 'dash-unit', 'km/h'), rpmBar);
   const drift = el('div');
   drift.id = 'drift';
 
@@ -123,8 +118,8 @@ export function createHud(track) {
     },
 
     // cars: [{ x, z, isPlayer, color }] with the player last so it is drawn on top.
-    // boost: 0..1 meter. driftText: current drift or last banked score ('' to hide).
-    update({ kmh, gear: gearLabel, rpm, redline, cars, boost = 0, boosting = false, driftText = '' }) {
+    // driftText: current drift or last banked score ('' to hide).
+    update({ kmh, gear: gearLabel, rpm, redline, cars, driftText = '' }) {
       if (!visible) return;
       const speedText = String(kmh);
       if (speedText !== lastSpeed) speed.textContent = lastSpeed = speedText;
@@ -132,8 +127,6 @@ export function createHud(track) {
       const fraction = Math.max(0, Math.min(1, rpm / redline));
       rpmFill.style.width = `${fraction * 100}%`;
       rpmFill.style.background = fraction > 0.9 ? '#ff6b6b' : '#7bd88f';
-      boostFill.style.width = `${Math.max(0, Math.min(1, boost)) * 100}%`;
-      boostFill.style.background = boosting ? '#ffd166' : '#4cc9f0';
       drift.textContent = driftText;
 
       ctx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT);

@@ -185,7 +185,7 @@ export function createMainMenu({ getStorage, skins, onSkinChange, onStart }) {
   });
   root.append(actions, board);
   root.append(
-    el('div', 'mm-note', 'W/S gas and brake · A/D steer · Space handbrake · Shift boost · drag mouse to look · C camera · R back to the road · E settings')
+    el('div', 'mm-note', 'W/S gas and brake · A/D steer · Space handbrake · drag mouse to look · C camera · E settings')
   );
 
   function renderBoard() {

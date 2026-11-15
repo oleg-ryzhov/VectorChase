@@ -100,7 +100,6 @@ export class Vehicle {
     this.surfaceGrip = [1, 1, 1, 1]; // grip under each wheel: 1 on tarmac, less on grass
     this.surfaceDrag = 1; // rolling resistance multiplier
     this.handbrake = 0; // 0..1, locks up the rear tires' grip to start drifts
-    this.boosting = false; // extra engine power while true
     this.wheelSlip = [0, 0, 0, 0]; // how hard each tire works: 1 is peak grip, above 1 is sliding
     this.u = 0;
     this.v = 0;
@@ -171,7 +170,6 @@ export class Vehicle {
     this.steerInput = 0;
     this.steer = 0;
     this.handbrake = 0;
-    this.boosting = false;
     this.gear = 1;
     this.shiftTimer = 0;
     this.accelX = 0;
@@ -253,15 +251,7 @@ export class Vehicle {
       brakeTarget = clamp(c.brake, 0, 1);
       if (this.gear < 0) this.gear = 1;
     }
-    // Driving assists (players only; bots steer themselves). Only while moving forward.
-    const slide = this.u > 0 && Math.hypot(this.u, this.v) > 5 ? Math.atan2(this.v, Math.max(this.u, 3)) : 0;
-    const spin = c.analog ? 0 : clamp((Math.abs(slide) - 0.35) / 0.5, 0, 1) * spec.assistStability;
-    if (spin > 0) {
-      throttleTarget *= 1 - spin;
-      if (this.u > 3) brakeTarget = Math.max(brakeTarget, 0.5 * spin);
-    }
     this.handbrake = approach(this.handbrake, c.handbrake ? 1 : 0, 10 * dt, 6 * dt);
-    this.boosting = !!c.boost && this.u > 1;
     this.throttle = approach(this.throttle, throttleTarget, THROTTLE_UP * dt, THROTTLE_DOWN * dt);
     this.brake = approach(this.brake, brakeTarget, BRAKE_UP * dt, BRAKE_DOWN * dt);
 
@@ -269,12 +259,6 @@ export class Vehicle {
     const rate = steerTarget === 0 ? STEER_RETURN : STEER_RATE;
     this.steerInput = approach(this.steerInput, steerTarget, rate * dt, rate * dt);
     this.steer = this.steerInput * (spec.maxSteer / (1 + (this.u / spec.steerSpeedRef) ** 2));
-    if (!c.analog && slide !== 0) {
-      // Countersteer into the slide, stepping back while the player is steering.
-      const hands = Math.max(1 - Math.abs(this.steerInput), spin);
-      this.steer += clamp(spec.assistCountersteer * hands * slide, -0.35, 0.35);
-      this.steer = clamp(this.steer, -0.45, 0.45);
-    }
   }
 
   _updateGearbox(dt, spec) {
@@ -360,7 +344,7 @@ export class Vehicle {
     let engineTorque = 0;
     if (this.shiftTimer <= 0 && rpm <= spec.redline) {
       engineTorque =
-        this.throttle * curveTorque(rpm / redlineScale) * torqueScale * (this.boosting ? 1 + spec.boostPower : 1);
+        this.throttle * curveTorque(rpm / redlineScale) * torqueScale;
     }
     const dragTorque =
       spec.engineBraking *

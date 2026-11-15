@@ -6,11 +6,10 @@ import { YAW_GYRATION } from './vehicle.js';
 
 const CIRCLE_RADIUS = 0.95;
 const CIRCLE_OFFSETS = [1.35, 0, -1.35]; // m forward of the centre of gravity
-const RESTITUTION = 0.2;
+const RESTITUTION = 0.3; // bumpers and crumple zones absorb most of the bounce
 const BOUNCE_THRESHOLD = 0.5; // m/s: slower impacts do not bounce
 const CAR_FRICTION = 0.15;
-const WALL_FRICTION = 0.1;
-const WALL_SPIN_DAMP = 0.6; // share of the yaw rate kept after each wall contact
+const WALL_FRICTION = 0.35; // rubber or metal scraping along a barrier
 const SLOP = 0.005; // m of extra separation so cars do not stay in contact
 
 // A car as a rigid body: world velocity of the centre of gravity and yaw rate.
@@ -133,7 +132,6 @@ export function collideWall(car, world, spec) {
     const nz = lat.nz * side;
     const toWall = world.wallOffset - Math.abs(lat.offset);
     impulse(body, null, c.x + nx * toWall, c.z + nz * toWall, nx, nz, WALL_FRICTION);
-    body.r *= WALL_SPIN_DAMP;
     car.x -= nx * (depth + SLOP);
     car.z -= nz * (depth + SLOP);
   }

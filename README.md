@@ -30,12 +30,12 @@ See `docs/DESIGN.md`.
 
 - W / S: accelerate / brake (hold S when stopped to reverse)
 - A / D: steer
-- C: switch between first-person and chase camera
+- C: cycle the camera: first-person, chase, rear (the chase view turned around)
 - E: open or close the car settings during a race (time slows down while it is open)
-- R: put the car back on the road
-- Space: handbrake (start a drift). Shift: boost (drifting fills the meter)
-- Hold the left mouse button (or drag a finger) and move: free-look around the car; the wheel zooms
-- Assists (stability, countersteer, boost) can be tuned in the E menu under Assists
+- Space: handbrake (start a drift)
+- Hold the left mouse button (or drag a finger) and move: free-look around the car, starting from the chase camera; the wheel zooms
+- There are no driving assists: the car behaves like a real one, and walls and cars act as solid obstacles
+- The E menu has Basic (the main settings), Advanced (everything else) and Presets tabs
 
 ## Troubleshooting
 

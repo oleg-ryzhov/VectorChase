@@ -12,10 +12,10 @@ function drift(t, seconds, car = drifting) {
   for (let i = 0; i < Math.round(seconds * 60); i++) t.update(1 / 60, car);
 }
 
-test('a long drift builds a multiplier, fills boost and is banked when it ends', () => {
+test('a long drift builds a multiplier, is banked when it ends', () => {
   const t = new StyleTracker();
   drift(t, 2.5);
-  assert.ok(t.driftPoints > 0 && t.multiplier >= 3 && t.meter > 0.2);
+  assert.ok(t.driftPoints > 0 && t.multiplier >= 3);
   drift(t, 1, gripping);
   assert.equal(t.driftPoints, 0);
   assert.ok(t.total > 0 && t.best === t.total && t.popupText === `+${t.total}`);
@@ -34,32 +34,27 @@ test('a short drift is not banked and a crash cancels the drift', () => {
   assert.equal(b.total, 0);
 });
 
-test('boost drains the meter and stops when it is empty', () => {
-  const t = new StyleTracker();
-  drift(t, 8);
-  const full = t.meter;
-  assert.ok(full > 0.9);
-  for (let i = 0; i < 60; i++) t.update(1 / 60, gripping, { boostHeld: true });
-  assert.ok(t.boosting && t.meter < full - 0.25);
-  for (let i = 0; i < 400; i++) t.update(1 / 60, gripping, { boostHeld: true });
-  assert.ok(!t.boosting && t.meter === 0);
-});
 
-test('free look orbits while held, clamps, zooms and eases back', () => {
+test('free look offsets start at the chase pose, drag naturally, clamp, zoom and ease back', () => {
   const look = new FreeLook();
   look.drag(100, 100); // ignored: not held
   assert.equal(look.yaw, 0);
+  const still = look.orbit(1, 0.2, 8);
+  assert.deepEqual(still, { angle: 1, pitch: 0.2, radius: 8 }); // no offset: exactly the chase pose
   look.start();
-  look.drag(200, 400);
-  assert.ok(look.yaw < -1 && look.pitch === 1.4);
+  look.drag(100, 0);
+  assert.ok(look.yaw > 0.5, 'dragging right moves the camera left around the car (angle grows)');
+  look.drag(0, 10000);
+  const high = look.orbit(0, 0.2, 8).pitch;
+  assert.ok(high > 1.3 && high <= 1.4, 'pitch is limited');
   look.zoom(10000);
-  assert.equal(look.radius, 16);
+  assert.equal(look.zoomScale, 2);
   look.end();
   assert.ok(look.engaged);
   for (let i = 0; i < 300; i++) look.update(1 / 60);
-  assert.ok(!look.engaged && look.yaw === 0 && look.pitch === 0.25);
-  const p = look.position({ x: 0, y: 1.7, z: 0 }, 0); // car heading +x: the camera sits behind it
-  assert.ok(p.x < -5 && Math.abs(p.z) < 1e-9 && p.y > 1.7);
+  assert.ok(!look.engaged && look.yaw === 0 && look.pitch === 0 && look.zoomScale === 1);
+  look.zoom(500); // ignored while not engaged
+  assert.equal(look.zoomScale, 1);
 });
 
 test('built-in presets only name real settings within range', () => {

@@ -1,29 +1,12 @@
 // Single source of truth for every tunable value.
 // Values are stored in the units shown here (kW, %, degrees...); src/physics/spec.js
-// converts them to SI. Physics, UI and bots read through getParam() or readCarSpec();
+// converts them to SI. basic: true puts a setting on the Basic tab; the rest are under Advanced. Physics, UI and bots read through getParam() or readCarSpec();
 // nothing caches values.
 
 export const PARAMS = [
-  // Assists
-  {
-    id: 'assist.stability', group: 'Assists', label: 'Stability control', unit: '%',
-    min: 0, max: 100, step: 5, default: 60,
-    description: 'Cuts the throttle and brakes gently when the car spins, so spin-outs end quickly. 0 is off.',
-  },
-  {
-    id: 'assist.countersteer', group: 'Assists', label: 'Countersteer assist', unit: '%',
-    min: 0, max: 100, step: 5, default: 60,
-    description: 'Steers into a slide when you let go of the steering keys. It backs off while you steer. 0 is off.',
-  },
-  {
-    id: 'assist.boost', group: 'Assists', label: 'Boost strength', unit: '%',
-    min: 0, max: 100, step: 5, default: 35,
-    description: 'Extra engine power while boosting (hold Shift). Drifting fills the boost meter.',
-  },
-
   // Chassis
   {
-    id: 'chassis.mass', group: 'Chassis', label: 'Mass', unit: 'kg',
+    id: 'chassis.mass', basic: true, group: 'Chassis', label: 'Mass', unit: 'kg',
     min: 500, max: 3000, step: 10, default: 1200,
     description: 'Total vehicle mass including driver.',
   },
@@ -45,7 +28,7 @@ export const PARAMS = [
     description: 'Air resistance. Lower means a higher top speed.',
   },
   {
-    id: 'aero.downforce', group: 'Aero', label: 'Downforce area (Cl x area)', unit: 'm²',
+    id: 'aero.downforce', basic: true, group: 'Aero', label: 'Downforce area (Cl x area)', unit: 'm²',
     min: 0, max: 2, step: 0.05, default: 0.4,
     description: 'Pushes the car onto the road as speed rises, adding grip.',
   },
@@ -59,7 +42,7 @@ export const PARAMS = [
 
   // Engine
   {
-    id: 'engine.power', group: 'Engine', label: 'Peak power', unit: 'kW',
+    id: 'engine.power', basic: true, group: 'Engine', label: 'Peak power', unit: 'kW',
     min: 50, max: 800, step: 5, default: 250,
     description: 'Peak engine output.',
   },
@@ -86,7 +69,7 @@ export const PARAMS = [
     description: 'Engine speed at which the automatic gearbox changes up. Capped just below the redline.',
   },
   {
-    id: 'drivetrain.frontBias', group: 'Drivetrain', label: 'Front drive share', unit: '%',
+    id: 'drivetrain.frontBias', basic: true, group: 'Drivetrain', label: 'Front drive share', unit: '%',
     min: 0, max: 100, step: 5, default: 0,
     description: '0 is rear-wheel drive, 50 is all-wheel drive, 100 is front-wheel drive.',
   },
@@ -105,7 +88,7 @@ export const PARAMS = [
 
   // Tires
   {
-    id: 'tire.friction', group: 'Tires', label: 'Friction coefficient', unit: 'μ',
+    id: 'tire.friction', basic: true, group: 'Tires', label: 'Friction coefficient', unit: 'μ',
     min: 0.1, max: 2, step: 0.01, default: 1.35,
     description: 'Scales maximum tire grip. Higher is easier to drive.',
   },
@@ -132,7 +115,7 @@ export const PARAMS = [
 
   // Brakes
   {
-    id: 'brakes.torque', group: 'Brakes', label: 'Total brake torque', unit: 'N·m',
+    id: 'brakes.torque', basic: true, group: 'Brakes', label: 'Total brake torque', unit: 'N·m',
     min: 1500, max: 9000, step: 100, default: 4600,
     description: 'Brake strength summed over all four wheels.',
   },
@@ -144,7 +127,7 @@ export const PARAMS = [
 
   // Steering
   {
-    id: 'steering.maxAngle', group: 'Steering', label: 'Maximum steering angle', unit: '°',
+    id: 'steering.maxAngle', basic: true, group: 'Steering', label: 'Maximum steering angle', unit: '°',
     min: 15, max: 45, step: 1, default: 32,
     description: 'Front wheel angle at full lock when standing still.',
   },
