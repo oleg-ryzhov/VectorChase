@@ -101,8 +101,12 @@ export function createEffects(scene, world) {
       const py = (i % 2 === 0 ? -1 : 1) * (spec.track / 2);
       const x = car.x + cos * px - sin * py;
       const z = car.z + sin * px + cos * py;
-      const ground = world.groundHeight(x, z);
+      const ground = world.groundHeight(x, z, car.y);
       const key = e.id * 4 + i;
+      if (car.airborne) {
+        skid.end(e.id * 4 + i);
+        continue;
+      }
       const onRoad = car.surfaceGrip[i] > 0.9;
       const slip = car.wheelSlip[i];
 

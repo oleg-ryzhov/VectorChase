@@ -138,6 +138,7 @@ export function loadSettings(storage) {
     laps: clampInt(s.laps, 1, 5, 3),
     bots: clampInt(s.bots, 1, 5, 3),
     difficulty: DIFFICULTY_IDS.includes(s.difficulty) ? s.difficulty : 'medium',
+    map: typeof s.map === 'string' ? s.map : 'oval',
   };
 }
 

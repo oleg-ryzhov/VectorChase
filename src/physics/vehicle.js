@@ -15,6 +15,8 @@ const RADS_TO_RPM = 60 / (Math.PI * 2);
 export const YAW_GYRATION = 1.25; // m, yaw inertia = mass * gyration^2
 const DOWNFORCE_FRONT_SHARE = 0.4;
 const FLAT_GROUND = { groundHeight: () => 0 };
+const TAKEOFF_GAP = 0.02; // m the ground must fall away from a free-fall path before the car leaves it
+const STEP_SNAP = 0.6; // m: a rise this big in one step is a kerb or wall, not a slope
 
 // Engine and gearbox
 const IDLE_RPM = 1000;
@@ -88,12 +90,15 @@ function approach(current, target, up, down) {
 }
 
 export class Vehicle {
-  constructor({ x = 0, z = 0, yaw = 0, ground = FLAT_GROUND } = {}) {
+  constructor({ x = 0, z = 0, yaw = 0, y = 0, ground = FLAT_GROUND } = {}) {
     this.ground = ground; // anything with groundHeight(x, z); sample(x, z) adds surface grip
     this.x = x;
     this.z = z;
     this.yaw = yaw;
-    this.y = 0; // height of the car, from the ground under the wheels
+    this.y = y; // height of the car, from the ground under the wheels
+    this.vy = 0; // vertical speed in m/s
+    this.airborne = false; // true while the wheels are off the ground
+    this.landing = 0; // m/s of the last touchdown, for effects
     this.pitch = 0; // slope under the car in rad (positive = nose up)
     this.roll = 0; // cross slope under the car in rad (positive = right side lower)
     this.slope = 0; // sin(pitch), used for gravity along the road
@@ -124,7 +129,7 @@ export class Vehicle {
 
     this.recoveries = 0; // how many times the numbers blew up and the car was reset
 
-    this._updateGround(readCarSpec());
+    this._updateGround(readCarSpec(), 0);
     this.prev = {
       x,
       y: this.y,
@@ -145,7 +150,7 @@ export class Vehicle {
 
     this._updateDriver(dt, controls, spec);
     this._updateGearbox(dt, spec);
-    this._updateGround(spec);
+    this._updateGround(spec, dt);
 
     const sub = dt / SUBSTEPS;
     for (let i = 0; i < SUBSTEPS; i++) this._substep(sub, spec);
@@ -155,10 +160,13 @@ export class Vehicle {
   }
 
   // Puts the car back on the ground at a position, standing still.
-  reset(x, z, yaw) {
+  reset(x, z, yaw, y = 0) {
     this.x = x;
     this.z = z;
     this.yaw = yaw;
+    this.y = y;
+    this.vy = 0;
+    this.airborne = false;
     this.u = 0;
     this.v = 0;
     this.r = 0;
@@ -174,7 +182,7 @@ export class Vehicle {
     this.shiftTimer = 0;
     this.accelX = 0;
     this.accelY = 0;
-    this._updateGround(readCarSpec());
+    this._updateGround(readCarSpec(), 0);
     this._savePrev(); // no smearing between the old and new position when drawing
   }
 
@@ -191,7 +199,7 @@ export class Vehicle {
   }
 
   // Height, pitch, roll and surface under the four wheels.
-  _updateGround(spec) {
+  _updateGround(spec, dt) {
     const { cgToFront: a, cgToRear: b, track } = spec;
     const cosYaw = Math.cos(this.yaw);
     const sinYaw = Math.sin(this.yaw);
@@ -201,8 +209,8 @@ export class Vehicle {
       const x = this.x + cosYaw * px - sinYaw * py;
       const z = this.z + sinYaw * px + cosYaw * py;
       return this.ground.sample
-        ? this.ground.sample(x, z)
-        : { height: this.ground.groundHeight(x, z), grip: 1, drag: 1 };
+        ? this.ground.sample(x, z, this.y)
+        : { height: this.ground.groundHeight(x, z, this.y), grip: 1, drag: 1 };
     };
     const wheels = [at(a, -half), at(a, half), at(-b, -half), at(-b, half)];
     const [fl, fr, rl, rr] = wheels.map((w) => w.height);
@@ -213,10 +221,53 @@ export class Vehicle {
     this.surfaceDrag = (wheels[0].drag + wheels[1].drag + wheels[2].drag + wheels[3].drag) / 4;
 
     const rise = (fl + fr) / 2 - (rl + rr) / 2;
-    this.y = (fl + fr + rl + rr) / 4;
+    const ground = (fl + fr + rl + rr) / 4;
     this.pitch = Math.atan2(rise, a + b);
     this.slope = rise / Math.hypot(a + b, rise);
     this.roll = Math.atan2((fl + rl) / 2 - (fr + rr) / 2, track);
+    this._moveVertically(ground, dt);
+  }
+
+  // Follows the ground, or flies on a free-fall path when the ground falls away faster than gravity pulls.
+  _moveVertically(ground, dt) {
+    this.landing = 0;
+    if (!(dt > 0)) {
+      this.y = ground;
+      return;
+    }
+    const ballistic = this.y + this.vy * dt - 0.5 * G * dt * dt;
+    if (!this.airborne) {
+      const rise = ground - this.y;
+      if (rise > STEP_SNAP) {
+        this.y = ground; // ran into a step: no launch
+        this.vy = 0;
+      } else if (ground < ballistic - TAKEOFF_GAP) {
+        this.airborne = true;
+        this.y = ballistic;
+        this.vy -= G * dt;
+      } else {
+        this.vy = clamp(rise / dt, -40, 40);
+        this.y = ground;
+      }
+    } else if (ballistic <= ground && ground - this.y <= STEP_SNAP) {
+      // Touchdown: keep the speed along the road, lose the part that went into it.
+      const tan = Math.tan(this.pitch);
+      this.landing = Math.max(0, -(this.vy * Math.cos(this.pitch) - this.u * Math.sin(this.pitch)));
+      this.u = clamp(this.u + this.vy * tan, 0.5 * this.u, 1.5 * this.u);
+      this.airborne = false;
+      this.vy = 0;
+      this.y = ground;
+    } else {
+      this.y = ballistic;
+      this.vy -= G * dt;
+    }
+    if (this.airborne) {
+      // Nose follows the flight path; the body levels out sideways.
+      const target = Math.atan2(this.vy, Math.max(Math.abs(this.u), 3));
+      this.pitch += (target - this.pitch) * Math.min(1, 6 * dt);
+      this.roll *= 1 - Math.min(1, 3 * dt);
+      this.slope = 0;
+    }
   }
 
   // Average speed of the driven wheels, weighted by the front/rear drive split.
@@ -315,12 +366,18 @@ export class Vehicle {
     const dLatR = dLat - dLatF;
     const downforce = 0.5 * AIR_DENSITY * spec.downforceArea * u * u;
     const downFront = downforce * DOWNFORCE_FRONT_SHARE;
-    const wf = (m * G * b) / L + downFront;
-    const wr = (m * G * a) / L + (downforce - downFront);
+    // On a banked road the weight presses less on the tyres, but cornering presses them in.
+    const flying = this.airborne;
+    const sinRoll = flying ? 0 : Math.sin(this.roll);
+    const cosRoll = flying ? 1 : Math.cos(this.roll);
+    const bankLoad = flying ? 0 : clamp(cosRoll + ((u * r) / G) * Math.tan(this.roll), 0.3, 3);
+    const wf = ((m * G * b) / L) * bankLoad + downFront;
+    const wr = ((m * G * a) / L) * bankLoad + (downforce - downFront);
     fz[0] = Math.max(0, wf / 2 - dLong / 2 + dLatF);
     fz[1] = Math.max(0, wf / 2 - dLong / 2 - dLatF);
     fz[2] = Math.max(0, wr / 2 + dLong / 2 + dLatR);
     fz[3] = Math.max(0, wr / 2 + dLong / 2 - dLatR);
+    if (flying) fz.fill(0);
 
     const fzNom = (m * G) / 4;
     for (let i = 0; i < 4; i++) {
@@ -428,11 +485,11 @@ export class Vehicle {
     const aero = -0.5 * AIR_DENSITY * spec.dragArea * u * Math.abs(u);
     const rolling = -spec.rollingResistance * this.surfaceDrag * m * G * Math.tanh(u / 0.5);
     const fxBody = sumFx + aero + rolling;
-    const gravity = -m * G * this.slope; // pulls the car back uphill and forward downhill
+    const gravity = flying ? 0 : -m * G * this.slope; // pulls the car back uphill and forward downhill
     const izz = m * YAW_GYRATION * YAW_GYRATION;
 
     this.u += ((fxBody + gravity) / m + r * v) * dt;
-    this.v += (sumFy / m - r * u) * dt;
+    this.v += (sumFy / m - r * u + G * sinRoll) * dt; // the last term slides the car down a banked road
     this.r += (moment / izz) * dt;
 
     const cosYaw = Math.cos(this.yaw);
@@ -468,5 +525,7 @@ export class Vehicle {
     this.throttle = 0;
     this.brake = 0;
     this.shiftTimer = 0;
+    this.vy = 0;
+    this.airborne = false;
   }
 }

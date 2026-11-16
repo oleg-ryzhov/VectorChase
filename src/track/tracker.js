@@ -26,9 +26,29 @@ export class TrackTracker {
     this.offTrack = false;
   }
 
-  update(x, z) {
-    const { points, length, spacing } = this.track;
+  // y is the car's height. A car that is back on the road at the far end of a shortcut it left the road for
+  // gets the progress of that spot (track.shortcuts: { fromS, toS, toIndex, armBefore, armAfter, reach }).
+  update(x, z, y = 0, grounded = true) {
+    const { points, length, spacing, shortcuts = [] } = this.track;
     const n = points.length;
+
+    for (const j of shortcuts) {
+      if (this.s < j.fromS - j.armBefore || this.s > j.fromS + j.armAfter) continue;
+      if (!grounded) continue;
+      let near = false;
+      for (let k = -j.window; k <= j.window && !near; k++) {
+        const p = points[(j.toIndex + k + n) % n];
+        near = Math.hypot(x - p.x, z - p.z) <= j.reach && Math.abs(y - p.y) < 5;
+      }
+      if (near) {
+        this.s = j.toS;
+        this.index = j.toIndex;
+        this.total = this.lap * length + j.toS;
+        this.dist = 0;
+        this.offTrack = false;
+        return;
+      }
+    }
 
     let best = this.index;
     let bestD2 = Infinity;

@@ -241,3 +241,31 @@ test('handbrake loosens the rear', () => {
   run(braked, 1, { ...FORWARD, right: true, handbrake: true });
   assert.ok(Math.abs(braked.v) > Math.abs(grippy.v), `braked ${braked.v} grippy ${grippy.v}`);
 });
+
+test('a car that drives off an edge leaves the ground, falls and lands again', () => {
+  resetAll();
+  const cliff = { groundHeight: (x) => (x < 20 ? 0 : -15) };
+  const car = new Vehicle({ x: 0, z: 0, yaw: 0, ground: cliff });
+  car.u = 20;
+  car.wheelSpeed.fill(20 / 0.33);
+  let flew = false;
+  for (let i = 0; i < 480; i++) {
+    car.step(DT, {});
+    if (car.airborne) flew = true;
+  }
+  assert.ok(flew, 'left the edge');
+  assert.ok(!car.airborne && Math.abs(car.y + 15) < 0.05, `landed at ${car.y}`);
+  assert.ok(car.u > 12, 'kept most of its speed');
+});
+
+test('a gentle crest at low speed does not launch the car', () => {
+  resetAll();
+  const hill = { groundHeight: (x) => 1.5 * Math.exp(-(((x - 50) / 25) ** 2)) };
+  const car = new Vehicle({ x: 0, z: 0, yaw: 0, ground: hill });
+  car.u = 10;
+  car.wheelSpeed.fill(10 / 0.33);
+  for (let i = 0; i < 600; i++) {
+    car.step(DT, {});
+    assert.ok(!car.airborne, `airborne at x=${car.x.toFixed(0)}`);
+  }
+});

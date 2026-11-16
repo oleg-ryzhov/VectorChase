@@ -2,11 +2,9 @@ import * as THREE from 'three';
 import { FixedStepper } from './core/time.js';
 import { Input } from './core/input.js';
 import { runLoop } from './core/loop.js';
-import { buildTrack } from './track/track.js';
-import { CONTROL_POINTS, TRACK_OPTIONS, baseHeight } from './track/trackData.js';
-import { buildTrackMesh } from './track/trackMesh.js';
-import { createWorld } from './track/world.js';
-import { buildTerrainMesh } from './track/terrainMesh.js';
+import { MAPS } from './maps/index.js';
+import { prepareMap } from './maps/prepare.js';
+import { buildMapScene } from './scene/mapScene.js';
 import { TrackTracker } from './track/tracker.js';
 import { Vehicle } from './physics/vehicle.js';
 import { readCarSpec } from './physics/spec.js';
@@ -15,7 +13,7 @@ import { createCarModel } from './car/carModel.js';
 import { SKINS, findSkin } from './car/skins.js';
 import { BotDriver } from './ai/bot.js';
 import { Race, pointsFor } from './race/race.js';
-import { recordRace } from './profile/profiles.js';
+import { recordRace, loadSettings } from './profile/profiles.js';
 import { subscribe } from './config/registry.js';
 import { createEffects } from './effects/effects.js';
 import { createSettingsMenu } from './ui/settingsMenu.js';
@@ -66,6 +64,8 @@ function getStorage() {
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Free look: hold the left mouse button (or drag a finger) and move to orbit the car; the wheel zooms.
@@ -102,18 +102,28 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY_COLOR);
 scene.fog = new THREE.Fog(SKY_COLOR, 500, 2600);
 
-const camera = new THREE.PerspectiveCamera(FIRST_PERSON_FOV, window.innerWidth / window.innerHeight, 0.1, 3000);
+const camera = new THREE.PerspectiveCamera(FIRST_PERSON_FOV, window.innerWidth / window.innerHeight, 0.1, 6000);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.0));
-const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-sun.position.set(10, 20, 10);
-scene.add(sun);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 1.0);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 260 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.3;
+scene.add(sun, sun.target);
+const sunDir = new THREE.Vector3(0.5, 0.8, 0.35).normalize();
 
-const track = buildTrack(CONTROL_POINTS, TRACK_OPTIONS);
-scene.add(buildTrackMesh(track));
-const world = createWorld(track, baseHeight);
-scene.add(buildTerrainMesh(world));
-const effects = createEffects(scene, world);
+// The map being raced on. installMap() swaps these when another map is picked.
+const mapById = (id) => MAPS.find((m) => m.id === id) ?? MAPS[0];
+let prepared = prepareMap(mapById(loadSettings(getStorage()).map).build());
+let track = prepared.track;
+let world = prepared.world;
+let mapScene = null;
+const worldView = { groundHeight: (x, z, y) => world.groundHeight(x, z, y) };
+const effects = createEffects(scene, worldView);
 
 const input = new Input();
 const stepper = new FixedStepper(1 / 120, 8);
@@ -133,6 +143,9 @@ let nextId = 0;
 function createEntrant({ name, isPlayer, skin, driver = null }) {
   const model = createCarModel(skin);
   scene.add(model.root);
+  model.root.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
   return {
     id: nextId++,
     name,
@@ -161,7 +174,7 @@ function placeOnGrid(list) {
     const total = -(GRID_FIRST_GAP + Math.floor(i / 2) * GRID_ROW_GAP + (i % 2) * GRID_STAGGER);
     const s = ((total % length) + length) % length;
     const p = points[Math.round(s / spacing) % n];
-    e.car.reset(p.x + p.nx * side * GRID_LANE, p.z + p.nz * side * GRID_LANE, Math.atan2(p.tz, p.tx));
+    e.car.reset(p.x + p.nx * side * GRID_LANE, p.z + p.nz * side * GRID_LANE, Math.atan2(p.tz, p.tx), p.y);
     e.tracker.setProgress(total);
     e.stuckTime = 0;
     e.offRoadTime = 0;
@@ -172,7 +185,7 @@ function placeOnGrid(list) {
 function respawn(e) {
   const { points, spacing } = track;
   const p = points[Math.round(e.tracker.s / spacing) % points.length];
-  e.car.reset(p.x, p.z, Math.atan2(p.tz, p.tx));
+  e.car.reset(p.x, p.z, Math.atan2(p.tz, p.tx), p.y);
   e.tracker.setProgress(e.tracker.total);
   e.stuckTime = 0;
   e.offRoadTime = 0;
@@ -183,6 +196,8 @@ function respawn(e) {
 const mainMenu = createMainMenu({
   getStorage,
   skins: SKINS,
+  maps: MAPS,
+  onMapChange: (id) => installMap(prepareMap(mapById(id).build())),
   onSkinChange: (id) => {
     const skin = findSkin(id);
     player.model.setSkin(skin);
@@ -228,6 +243,7 @@ function startRace() {
           difficulty: state.difficulty,
           variation: 0.95 + (0.05 * ((i * 5) % 7)) / 6,
           laneOffset: LANE_OFFSETS[i],
+          speedScale: prepared.config.botSpeedScale ?? 1,
         }),
       })
     );
@@ -367,7 +383,9 @@ function fixedUpdate(dt) {
   style.update(dt, player.car, { crashed: playerCrashed });
 
   for (const e of entrants) {
-    e.tracker.update(e.car.x, e.car.z);
+    e.tracker.update(e.car.x, e.car.z, e.car.y, !e.car.airborne);
+    // Falling into water or off the world puts the car back on the road.
+    if (world.hazard(e.car.x, e.car.z, e.car.y)) respawn(e);
 
     // Bots that get stuck or lost are put back on the road.
     if (!e.isPlayer) {
@@ -450,7 +468,7 @@ function render(alpha) {
     const camZ = me.z + flat * Math.sin(o.angle);
     const camY = me.y + 1.0 + o.radius * Math.sin(o.pitch);
     // Stay above the hill under the camera.
-    camera.position.set(camX, Math.max(camY, world.groundHeight(camX, camZ) + 1.5), camZ);
+    camera.position.set(camX, Math.max(camY, world.groundHeight(camX, camZ, me.y + 2) + 1.5), camZ);
     camera.lookAt(
       me.x - CHASE_LOOK_AHEAD * Math.cos(o.angle),
       me.y + 1.0,
@@ -459,7 +477,7 @@ function render(alpha) {
   } else {
     const camX = me.x + Math.cos(orbitAngle) * ORBIT_RADIUS;
     const camZ = me.z + Math.sin(orbitAngle) * ORBIT_RADIUS;
-    camera.position.set(camX, Math.max(me.y + ORBIT_HEIGHT, world.groundHeight(camX, camZ) + 1.5), camZ);
+    camera.position.set(camX, Math.max(me.y + ORBIT_HEIGHT, world.groundHeight(camX, camZ, me.y + 2) + 1.5), camZ);
     camera.lookAt(me.x, me.y + 0.8, me.z);
   }
 
@@ -482,6 +500,11 @@ function render(alpha) {
   }
   lastPose.pos.copy(camera.position);
   lastPose.quat.copy(camera.quaternion);
+
+  sun.position.set(me.x + sunDir.x * 100, me.y + sunDir.y * 100, me.z + sunDir.z * 100);
+  sun.target.position.set(me.x, me.y, me.z);
+  sun.target.updateMatrixWorld();
+  mapScene.update(camera.position);
 
   effects.update(frameDt, entrants, camera, renderer.domElement.height);
   renderer.render(scene, camera);
@@ -530,5 +553,48 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// Night maps give the player headlights.
+const headlight = new THREE.SpotLight(0xfff0cc, 0, 140, 0.55, 0.7, 1);
+headlight.position.set(1.8, 0.9, 0);
+headlight.target.position.set(30, -1, 0);
+player.model.root.add(headlight, headlight.target);
+
+// Swaps the whole map: world, scenery, lighting, minimap and the starting grid.
+function installMap(next) {
+  if (mapScene) {
+    scene.remove(mapScene.group);
+    mapScene.dispose();
+  }
+  prepared = next;
+  track = next.track;
+  world = next.world;
+  mapScene = buildMapScene(next);
+  scene.add(mapScene.group);
+
+  const theme = next.config.theme;
+  scene.background = new THREE.Color(theme.sky[1]);
+  scene.fog = new THREE.Fog(theme.fog[0], theme.fog[1], theme.fog[2]);
+  const l = mapScene.lights;
+  hemi.color.set(l.hemi.sky);
+  hemi.groundColor.set(l.hemi.ground);
+  hemi.intensity = l.hemi.intensity;
+  sun.color.set(l.sun.color);
+  sun.intensity = l.sun.intensity;
+  sunDir.set(...l.dir).normalize();
+  headlight.intensity = l.headlights ? 40 : 0;
+
+  clearBots();
+  effects.clear();
+  style.reset();
+  player.car.ground = world;
+  player.tracker = new TrackTracker(track);
+  hudPanel.setTrack(track);
+  placeOnGrid(entrants);
+  chaseYaw = player.car.yaw;
+  chaseY = player.car.y + CHASE_HEIGHT;
+  lastView = null;
+}
+installMap(prepared);
 
 runLoop({ stepper, beforeFrame, fixedUpdate, render });

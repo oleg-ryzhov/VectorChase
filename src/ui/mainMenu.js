@@ -46,7 +46,7 @@ const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
 // callbacks: onSkinChange(skinId) when the paint changes, onStart() for "Start race".
 // They are only called after the menu is built, never during createMainMenu.
-export function createMainMenu({ getStorage, skins, onSkinChange, onStart }) {
+export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart }) {
   addStyle(STYLE);
   const store = getStorage(); // null if the browser blocks storage
 
@@ -160,8 +160,18 @@ export function createMainMenu({ getStorage, skins, onSkinChange, onStart }) {
     });
     return select;
   }
+  const mapNote = el('div', 'mm-note');
+  const showMapNote = () => (mapNote.textContent = maps.find((m) => m.id === settings.map)?.blurb ?? '');
+  if (!maps.some((m) => m.id === settings.map)) settings.map = maps[0]?.id ?? settings.map;
+  showMapNote();
   const grid = el('div', 'mm-grid');
   grid.append(
+    el('label', '', 'Map'),
+    choice(maps.map((m) => [m.id, `${m.name} (${m.kind})`]), settings.map, (v) => {
+      settings.map = v;
+      showMapNote();
+      onMapChange(v);
+    }),
     el('label', '', 'Length'),
     choice(LAP_CHOICES, settings.laps, (v) => (settings.laps = Number(v))),
     el('label', '', 'Opponents'),
@@ -169,7 +179,7 @@ export function createMainMenu({ getStorage, skins, onSkinChange, onStart }) {
     el('label', '', 'Difficulty'),
     choice(DIFFICULTIES, settings.difficulty, (v) => (settings.difficulty = v))
   );
-  root.append(el('h2', '', 'Race'), grid);
+  root.append(el('h2', '', 'Race'), grid, mapNote);
 
   // Buttons and leaderboard
   const startButton = button('Start race', 'mm-primary');
@@ -242,6 +252,7 @@ export function createMainMenu({ getStorage, skins, onSkinChange, onStart }) {
         laps: settings.laps,
         bots: settings.bots,
         difficulty: settings.difficulty,
+        map: settings.map,
       };
     },
   };

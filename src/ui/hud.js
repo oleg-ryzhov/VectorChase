@@ -52,45 +52,52 @@ export function createHud(track) {
 
   document.body.append(dash, map, changes, drift);
 
-  // The track outline never changes, so it is drawn once and copied each frame.
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const p of track.points) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minZ = Math.min(minZ, p.z);
-    maxZ = Math.max(maxZ, p.z);
-  }
-  const scale = Math.min(
-    (MAP_WIDTH - 2 * MAP_PADDING) / (maxX - minX),
-    (MAP_HEIGHT - 2 * MAP_PADDING) / (maxZ - minZ)
-  );
-  const offsetX = (MAP_WIDTH - (maxX - minX) * scale) / 2;
-  const offsetZ = (MAP_HEIGHT - (maxZ - minZ) * scale) / 2;
-  const mapX = (x) => offsetX + (x - minX) * scale;
-  const mapY = (z) => offsetZ + (z - minZ) * scale;
-
+  // The track outline only changes with the map, so it is drawn once and copied each frame.
   const base = document.createElement('canvas');
   base.width = MAP_WIDTH;
   base.height = MAP_HEIGHT;
   const baseCtx = base.getContext('2d');
-  baseCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-  baseCtx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
-  baseCtx.strokeStyle = '#c9d2e0';
-  baseCtx.lineWidth = 3;
-  baseCtx.lineJoin = 'round';
-  baseCtx.beginPath();
-  track.points.forEach((p, i) => {
-    if (i % 6 !== 0) return;
-    if (i === 0) baseCtx.moveTo(mapX(p.x), mapY(p.z));
-    else baseCtx.lineTo(mapX(p.x), mapY(p.z));
-  });
-  baseCtx.closePath();
-  baseCtx.stroke();
-  baseCtx.fillStyle = '#ffffff';
-  baseCtx.fillRect(mapX(track.points[0].x) - 3, mapY(track.points[0].z) - 3, 6, 6); // start line
+  let mapX = () => 0;
+  let mapY = () => 0;
+
+  function drawBase(track) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const p of track.points) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z);
+      maxZ = Math.max(maxZ, p.z);
+    }
+    const scale = Math.min(
+      (MAP_WIDTH - 2 * MAP_PADDING) / (maxX - minX),
+      (MAP_HEIGHT - 2 * MAP_PADDING) / (maxZ - minZ)
+    );
+    const offsetX = (MAP_WIDTH - (maxX - minX) * scale) / 2;
+    const offsetZ = (MAP_HEIGHT - (maxZ - minZ) * scale) / 2;
+    mapX = (x) => offsetX + (x - minX) * scale;
+    mapY = (z) => offsetZ + (z - minZ) * scale;
+
+    baseCtx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    baseCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    baseCtx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    baseCtx.strokeStyle = '#c9d2e0';
+    baseCtx.lineWidth = 3;
+    baseCtx.lineJoin = 'round';
+    baseCtx.beginPath();
+    track.points.forEach((p, i) => {
+      if (i % 6 !== 0) return;
+      if (i === 0) baseCtx.moveTo(mapX(p.x), mapY(p.z));
+      else baseCtx.lineTo(mapX(p.x), mapY(p.z));
+    });
+    baseCtx.closePath();
+    baseCtx.stroke();
+    baseCtx.fillStyle = '#ffffff';
+    baseCtx.fillRect(mapX(track.points[0].x) - 3, mapY(track.points[0].z) - 3, 6, 6); // start line
+  }
+  drawBase(track);
 
   let visible = false;
   let lastSpeed = '';
@@ -108,6 +115,7 @@ export function createHud(track) {
   subscribe(renderChanges);
 
   return {
+    setTrack: drawBase,
     setVisible(next) {
       if (next === visible) return;
       visible = next;

@@ -98,9 +98,9 @@ test('data is stored as readable plain text', () => {
 
 test('settings are validated when loaded', () => {
   const store = fakeStorage();
-  assert.deepEqual(loadSettings(store), { user: null, skin: 'red', laps: 3, bots: 3, difficulty: 'medium' });
+  assert.deepEqual(loadSettings(store), { user: null, skin: 'red', laps: 3, bots: 3, difficulty: 'medium', map: 'oval' });
   store.setItem(SETTINGS_KEY, JSON.stringify({ user: 'Oleg', skin: 'blue', laps: 99, bots: 0, difficulty: 'x' }));
-  assert.deepEqual(loadSettings(store), { user: 'Oleg', skin: 'blue', laps: 5, bots: 1, difficulty: 'medium' });
+  assert.deepEqual(loadSettings(store), { user: 'Oleg', skin: 'blue', laps: 5, bots: 1, difficulty: 'medium', map: 'oval' });
   store.setItem(SETTINGS_KEY, '{oops');
   assert.equal(loadSettings(store).laps, 3);
   assert.equal(saveSettings(store, { user: null, skin: 'red', laps: 2, bots: 2, difficulty: 'hard' }), true);

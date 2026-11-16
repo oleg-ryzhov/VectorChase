@@ -43,3 +43,22 @@ See `docs/DESIGN.md`.
   File names are case-sensitive on GitHub Pages and Netlify.
 - Blank page when opening `index.html` by double-click: serve the folder over HTTP (see "Run locally").
 - Scores and players are stored in your browser's `localStorage` as plain text, per device.
+
+## Maps
+
+Pick a map in the main menu. Roads can bank, cross over each other on bridges and run through tunnels; the car can leave the ground.
+
+| Map | What it is |
+| --- | --- |
+| Thunder Speedway | NASCAR-style oval, 26 degree banking in the turns |
+| Suzuka Circuit | Real F1 circuit (Japanese Grand Prix). The back straight crosses over the Degner curves |
+| Monza | Real circuit, the Temple of Speed |
+| Neon Metropolis | Night city: highway over the boulevard, a tunnel through a tower |
+| Eiger Pass | Mountain tunnel, a bridge over a ravine, switchbacks down a cliff |
+| Red Mesa Canyon | Desert gorges, a mesa tunnel and a bridge |
+
+Shortcuts (not marked on the road): on Neon Metropolis, Eiger Pass and Red Mesa Canyon you can leave the road at a bend with a gap in the barrier and jump straight across instead of following the detour. Each needs roughly 120-150 km/h at the edge. Miss and you fall in the water and are put back on the road at your last progress. Cars also respawn this way if they fall off the world.
+
+The Suzuka and Monza centre lines come from the [TUMFTM racetrack-database](https://github.com/TUMFTM/racetrack-database) (LGPL-3.0). Their heights, and the Suzuka bridge, are approximate, and the roads are a little wider than the real ones.
+
+New maps live in `src/maps/`: a map is a list of waypoints (with height, banking, bridge/tunnel and barrier-gap flags), a terrain height function and a theme. `src/maps/index.js` lists them.

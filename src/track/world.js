@@ -1,4 +1,5 @@
-// Ground height, surface grip and wall queries for the road and the terrain around it.
+// Ground, surface and wall queries for a track that can bank, bridge and tunnel over itself.
+// Several road layers can sit above the same (x, z); queries take the car's height (y) to pick one.
 // Pure logic: no DOM or Three.js imports.
 
 export const WALL_GAP = 0.3; // m between the road edge and the wall
@@ -11,15 +12,17 @@ const LIP = 1.5; // m over which the driving surface drops to the terrain at the
 const SURFACE_FADE = 1.5; // m over which tarmac turns into grass at the road edge
 const GRASS_GRIP = 0.55; // tire grip on grass compared with tarmac
 const GRASS_DRAG = 4; // rolling resistance on grass compared with tarmac
+const STEP_UP = 0.9; // m a car can climb in one go; anything taller is a wall
+const SOLID_STEP = 1.1; // terrain this far above the car blocks it
+const LAYER_CELL = 30;
+const LAYER_GAP = 40; // track points apart that count as a different stretch of road
 
-function smoothstep01(t) {
+const smooth01 = (t) => {
   const c = Math.min(1, Math.max(0, t));
   return c * c * (3 - 2 * c);
-}
+};
 
-// Closest point to (x, z) on the segment a-b, as { dist, y, offset, nx, nz }.
-// offset is the signed distance across the segment (positive to the right of the direction of
-// travel) and (nx, nz) is the segment's right-hand unit normal.
+// Closest point to (x, z) on segment a-b. offset is positive to the right of the direction of travel.
 function closestOnSegment(a, b, x, z) {
   const dx = b.x - a.x;
   const dz = b.z - a.z;
@@ -34,43 +37,99 @@ function closestOnSegment(a, b, x, z) {
   return {
     dist: Math.hypot(x - px, z - pz),
     y: a.y + (b.y - a.y) * t,
+    tanBank: Math.tan(a.bank + (b.bank - a.bank) * t),
     offset: (x - px) * nx + (z - pz) * nz,
     nx,
     nz,
+    mode: t < 0.5 ? a.mode : b.mode,
+    gl: a.gl,
+    gr: a.gr,
   };
 }
 
-// baseHeight(x, z) is the natural ground height away from the road.
-export function createWorld(track, baseHeight = () => 0) {
-  const { points } = track;
-  const n = points.length;
-  const half = track.width / 2;
-  const flatEdge = half + SHOULDER;
-  const reach = flatEdge + BLEND;
-  const cell = reach; // the 3x3 block of cells around a query covers every point within `reach`
-  const cellKey = (cx, cz) => (cx + 4096) * 8192 + (cz + 4096);
-
+function buildGrid(points, cell, include) {
   const grid = new Map();
-  for (let i = 0; i < n; i++) {
-    const key = cellKey(Math.floor(points[i].x / cell), Math.floor(points[i].z / cell));
+  points.forEach((p, i) => {
+    if (!include(p)) return;
+    const key = Math.floor(p.x / cell) * 100003 + Math.floor(p.z / cell);
     const list = grid.get(key);
     if (list) list.push(i);
     else grid.set(key, [i]);
+  });
+  return grid;
+}
+
+// opts: { features: [(x, z) => metres added to the terrain], obstacles: [{ x0, x1, z0, z1, top }],
+//         waterLevel, killY, terrainGrip }
+export function createWorld(track, baseHeight = () => 0, opts = {}) {
+  const { points } = track;
+  const n = points.length;
+  const half = track.width / 2;
+  const { features = [], obstacles = [], waterLevel = -Infinity, killY = -Infinity, terrainGrip = GRASS_GRIP } = opts;
+  const flatEdge = half + SHOULDER;
+  const reach = flatEdge + BLEND;
+  const wrap = (i) => ((i % n) + n) % n;
+
+  // ---- Road layers: every stretch of road within reach of a point, with its own height ----
+  const layerGrid = buildGrid(points, LAYER_CELL, () => true);
+  const maxLateral = half + 6;
+
+  function hitAt(i, x, z) {
+    const p = points[i];
+    const s1 = closestOnSegment(points[wrap(i - 1)], p, x, z);
+    const s2 = closestOnSegment(p, points[wrap(i + 1)], x, z);
+    return s1.dist < s2.dist ? s1 : s2;
   }
 
-  // Closest point on the centre line, or null if the road is farther than `reach`.
-  function nearest(x, z) {
-    const cx = Math.floor(x / cell);
-    const cz = Math.floor(z / cell);
-    let best = -1;
-    let bestD2 = Infinity;
+  function layerHits(x, z) {
+    const cx = Math.floor(x / LAYER_CELL);
+    const cz = Math.floor(z / LAYER_CELL);
+    const found = [];
     for (let dx = -1; dx <= 1; dx++) {
       for (let dz = -1; dz <= 1; dz++) {
-        const list = grid.get(cellKey(cx + dx, cz + dz));
+        const list = layerGrid.get((cx + dx) * 100003 + (cz + dz));
         if (!list) continue;
         for (const i of list) {
-          const p = points[i];
-          const d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
+          const d2 = (points[i].x - x) ** 2 + (points[i].z - z) ** 2;
+          if (d2 <= maxLateral * maxLateral) found.push([i, d2]);
+        }
+      }
+    }
+    if (found.length === 0) return found;
+    found.sort((a, b) => a[0] - b[0]);
+    const clusters = [[found[0]]];
+    for (let k = 1; k < found.length; k++) {
+      if (found[k][0] - found[k - 1][0] > LAYER_GAP) clusters.push([]);
+      clusters[clusters.length - 1].push(found[k]);
+    }
+    if (clusters.length > 1 && found[0][0] + n - found[found.length - 1][0] <= LAYER_GAP) {
+      clusters[0] = clusters.pop().concat(clusters[0]);
+    }
+    return clusters.map((c) => hitAt(c.reduce((best, f) => (f[1] < best[1] ? f : best))[0], x, z));
+  }
+
+  const roadHeight = (hit) => hit.y - hit.offset * hit.tanBank;
+
+  // ---- Terrain: natural ground, flattened beside ground-level road, plus features ----
+  const groundGrid = buildGrid(points, reach, (p) => p.mode === 'g');
+  const featureHeight = (x, z) => {
+    let h = 0;
+    for (const f of features) h += f(x, z);
+    return h;
+  };
+
+  // Closest ground-level road point, or null when none is within reach.
+  function carveHit(x, z) {
+    const cx = Math.floor(x / reach);
+    const cz = Math.floor(z / reach);
+    let best = -1;
+    let bestD2 = reach * reach;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const list = groundGrid.get((cx + dx) * 100003 + (cz + dz));
+        if (!list) continue;
+        for (const i of list) {
+          const d2 = (points[i].x - x) ** 2 + (points[i].z - z) ** 2;
           if (d2 < bestD2) {
             bestD2 = d2;
             best = i;
@@ -78,49 +137,133 @@ export function createWorld(track, baseHeight = () => 0) {
         }
       }
     }
-    if (best < 0) return null;
-
-    // Project onto the two segments next to the nearest point, so heights are exact on slopes.
-    const p = points[best];
-    const s1 = closestOnSegment(points[(best - 1 + n) % n], p, x, z);
-    const s2 = closestOnSegment(p, points[(best + 1) % n], x, z);
-    const hit = s1.dist < s2.dist ? s1 : s2;
-    return hit.dist <= reach ? hit : null;
+    return best < 0 ? null : hitAt(best, x, z);
   }
 
-  function height(x, z, withLip, hit) {
+  function terrainAt(x, z, hit, withLip) {
     const base = baseHeight(x, z);
-    if (!hit) return base;
-    const roadLevel = hit.y - ROAD_DEPTH;
-    const t = smoothstep01((hit.dist - flatEdge) / BLEND);
-    let h = roadLevel + (base - roadLevel) * t;
-    if (withLip) h += ROAD_DEPTH * (1 - smoothstep01((hit.dist - half) / LIP));
-    return h;
+    let h = base;
+    if (hit) {
+      const edge = Math.max(-half, Math.min(half, hit.offset));
+      const level = hit.y - edge * hit.tanBank - ROAD_DEPTH;
+      const t = smooth01((hit.dist - flatEdge) / BLEND);
+      h = level + (base - level) * t;
+      if (withLip) h += ROAD_DEPTH * (1 - smooth01((hit.dist - half) / LIP));
+    }
+    return h + featureHeight(x, z);
   }
 
-  // Everything the car physics needs about one spot: driving height and the surface under it.
-  function sample(x, z) {
-    const hit = nearest(x, z);
-    const grass = hit ? smoothstep01((hit.dist - half) / SURFACE_FADE) : 1; // 0 on the road, 1 on grass
-    return {
-      height: height(x, z, true, hit),
-      grip: 1 + (GRASS_GRIP - 1) * grass,
-      drag: 1 + (GRASS_DRAG - 1) * grass,
-    };
+  // ---- Choosing the surface under a car ----
+  // Returns { height, road (hit or null), grass (0..1) }.
+  function surface(x, z, y) {
+    const hit = carveHit(x, z);
+    const terrain = terrainAt(x, z, hit, true);
+    let best = null;
+    let bestH = -Infinity;
+    for (const l of layerHits(x, z)) {
+      if (Math.abs(l.offset) > half) continue;
+      const h = roadHeight(l);
+      const usable = y === undefined || h <= y + STEP_UP;
+      if (usable && h > bestH) {
+        best = l;
+        bestH = h;
+      }
+    }
+    if (best) return { height: bestH, road: best, grass: 0 }; // on a road: the road is the surface
+    const grass = hit ? smooth01((hit.dist - half) / SURFACE_FADE) : 1;
+    return { height: terrain, road: null, grass };
+  }
+
+  // ---- Obstacles (buildings, stands) ----
+  const OB_CELL = 64;
+  const obGrid = new Map();
+  obstacles.forEach((o, i) => {
+    for (let cx = Math.floor(o.x0 / OB_CELL); cx <= Math.floor(o.x1 / OB_CELL); cx++) {
+      for (let cz = Math.floor(o.z0 / OB_CELL); cz <= Math.floor(o.z1 / OB_CELL); cz++) {
+        const key = cx * 100003 + cz;
+        if (obGrid.has(key)) obGrid.get(key).push(i);
+        else obGrid.set(key, [i]);
+      }
+    }
+  });
+
+  // A solid thing at (x, z) for a circle of radius r at height y, as { nx, nz, depth } with the
+  // normal pointing from the car into the thing, or null.
+  function solid(x, z, y, r = 0.95) {
+    const list = obGrid.get(Math.floor(x / OB_CELL) * 100003 + Math.floor(z / OB_CELL));
+    if (list) {
+      for (const i of list) {
+        const o = obstacles[i];
+        if (o.top < y + 0.5) continue;
+        const px = Math.min(o.x1, Math.max(o.x0, x));
+        const pz = Math.min(o.z1, Math.max(o.z0, z));
+        const d = Math.hypot(x - px, z - pz);
+        if (d >= r) continue;
+        if (d > 1e-6) return { nx: (px - x) / d, nz: (pz - z) / d, depth: r - d };
+        // Centre inside the box: leave by the nearest face.
+        const out = [x - o.x0, o.x1 - x, z - o.z0, o.z1 - z];
+        const k = out.indexOf(Math.min(...out));
+        return { nx: [1, -1, 0, 0][k], nz: [0, 0, 1, -1][k], depth: out[k] + r };
+      }
+    }
+    if (surface(x, z, y).road) return null;
+    // Terrain too high to climb is a wall. Look uphill from the centre for where it starts.
+    const gx = terrainAt(x + 1, z, null, false) - terrainAt(x - 1, z, null, false);
+    const gz = terrainAt(x, z + 1, null, false) - terrainAt(x, z - 1, null, false);
+    const g = Math.hypot(gx, gz) / 2;
+    if (g < 0.3) return null; // too gentle to be a wall
+    const ux = gx / 2 / g;
+    const uz = gz / 2 / g;
+    for (let d = 0; d < r; d += r / 4) {
+      if (terrainAt(x + ux * d, z + uz * d, null, true) - y > SOLID_STEP) return { nx: ux, nz: uz, depth: r - d };
+    }
+    return null;
   }
 
   return {
-    // Height of the surface a car drives on: the road itself, or the terrain.
-    groundHeight: (x, z) => height(x, z, true, nearest(x, z)),
-    // Height of the terrain mesh (0.1 m under the road).
-    terrainHeight: (x, z) => height(x, z, false, nearest(x, z)),
-    sample,
-    // Signed distance from the centre line (positive = right) and the right-hand normal, or null.
-    lateral(x, z) {
-      const hit = nearest(x, z);
-      return hit ? { offset: hit.offset, nx: hit.nx, nz: hit.nz } : null;
+    // Height of the surface a car at height y drives on. Without y, the highest surface.
+    groundHeight: (x, z, y) => surface(x, z, y).height,
+    // Height of the terrain mesh (0.1 m under ground-level road).
+    terrainHeight: (x, z) => terrainAt(x, z, carveHit(x, z), false),
+    sample(x, z, y) {
+      const s = surface(x, z, y);
+      return {
+        height: s.height,
+        grip: 1 + (terrainGrip - 1) * s.grass,
+        drag: 1 + (GRASS_DRAG - 1) * s.grass,
+      };
+    },
+    // Distance across the road (positive = right), its normal, and whether a wall stands there.
+    lateral(x, z, y) {
+      let best = null;
+      let bestGap = Infinity;
+      for (const l of layerHits(x, z)) {
+        const gap = y === undefined ? -roadHeight(l) : Math.abs(roadHeight(l) - y);
+        if (gap < bestGap && (y === undefined || gap < 4)) {
+          best = l;
+          bestGap = gap;
+        }
+      }
+      if (!best) return null;
+      return { offset: best.offset, nx: best.nx, nz: best.nz, wall: !(best.offset > 0 ? best.gr : best.gl) };
+    },
+    solid,
+    hazard: (x, z, y) => y < waterLevel + 0.3 || y < killY,
+    // Horizontal distance to the nearest road of any layer (for placing scenery).
+    roadDistance(x, z) {
+      let best = Infinity;
+      const cx = Math.floor(x / LAYER_CELL);
+      const cz = Math.floor(z / LAYER_CELL);
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dz = -2; dz <= 2; dz++) {
+          for (const i of layerGrid.get((cx + dx) * 100003 + (cz + dz)) ?? []) {
+            best = Math.min(best, Math.hypot(points[i].x - x, points[i].z - z));
+          }
+        }
+      }
+      return best - half;
     },
     wallOffset: half + WALL_GAP, // distance from the centre line to the inner face of the walls
-    nearest,
+    waterLevel,
   };
 }

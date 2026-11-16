@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTrack } from '../src/track/track.js';
-import { CONTROL_POINTS, TRACK_OPTIONS } from '../src/track/trackData.js';
+import { CONTROL_POINTS, TRACK_OPTIONS } from './fixtureTrack.js';
 
 function circle(radius, count) {
   const pts = [];

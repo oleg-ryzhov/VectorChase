@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTrack } from '../src/track/track.js';
-import { CONTROL_POINTS, TRACK_OPTIONS, baseHeight } from '../src/track/trackData.js';
+import { CONTROL_POINTS, TRACK_OPTIONS, baseHeight } from './fixtureTrack.js';
 import { createWorld } from '../src/track/world.js';
 
 const track = buildTrack(CONTROL_POINTS, TRACK_OPTIONS);

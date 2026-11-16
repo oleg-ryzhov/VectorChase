@@ -122,18 +122,24 @@ export function collideWall(car, world, spec) {
   const limit = world.wallOffset - CIRCLE_RADIUS; // how far a circle centre may be from the centre line
   for (const offset of CIRCLE_OFFSETS) {
     const c = circleAt(car, offset); // measured fresh each time, because earlier pushes move the car
-    const lat = world.lateral(c.x, c.z);
-    if (!lat) continue;
-    const depth = Math.abs(lat.offset) - limit;
-    if (depth <= 0) continue;
-
-    const side = lat.offset > 0 ? 1 : -1;
-    const nx = lat.nx * side; // points from the car into the wall
-    const nz = lat.nz * side;
-    const toWall = world.wallOffset - Math.abs(lat.offset);
-    impulse(body, null, c.x + nx * toWall, c.z + nz * toWall, nx, nz, WALL_FRICTION);
-    car.x -= nx * (depth + SLOP);
-    car.z -= nz * (depth + SLOP);
+    const lat = world.lateral(c.x, c.z, car.y);
+    const depth = lat && lat.wall !== false ? Math.abs(lat.offset) - limit : 0;
+    if (depth > 0) {
+      const side = lat.offset > 0 ? 1 : -1;
+      const nx = lat.nx * side; // points from the car into the wall
+      const nz = lat.nz * side;
+      const toWall = world.wallOffset - Math.abs(lat.offset);
+      impulse(body, null, c.x + nx * toWall, c.z + nz * toWall, nx, nz, WALL_FRICTION);
+      car.x -= nx * (depth + SLOP);
+      car.z -= nz * (depth + SLOP);
+    }
+    // Buildings, rock faces and other solid things off the road.
+    const hit = world.solid ? world.solid(c.x, c.z, car.y, CIRCLE_RADIUS) : null;
+    if (hit) {
+      impulse(body, null, c.x + hit.nx * CIRCLE_RADIUS, c.z + hit.nz * CIRCLE_RADIUS, hit.nx, hit.nz, WALL_FRICTION);
+      car.x -= hit.nx * (hit.depth + SLOP);
+      car.z -= hit.nz * (hit.depth + SLOP);
+    }
   }
   store(body);
 }

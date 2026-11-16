@@ -4,8 +4,11 @@
 // - heading = atan2(tz, tx)
 // - right normal = (-tz, tx)
 // - curvature > 0 is a right turn, < 0 is a left turn (units: 1/m)
+// - control points may also carry bank (degrees, positive = right side lower), mode ('g' ground, 'b' bridge,
+//   't' tunnel), gl / gr (true = no wall on the left / right) and are copied onto the track points
 
 const DENSE_PER_SEGMENT = 64;
+const DEG = Math.PI / 180;
 
 function catmullRom(p0, p1, p2, p3, t) {
   const t2 = t * t;
@@ -46,6 +49,10 @@ export function buildTrack(control, options = {}) {
         x: catmullRom(p0.x, p1.x, p2.x, p3.x, t),
         y: catmullRom(p0.y ?? 0, p1.y ?? 0, p2.y ?? 0, p3.y ?? 0, t),
         z: catmullRom(p0.z, p1.z, p2.z, p3.z, t),
+        bank: catmullRom(p0.bank ?? 0, p1.bank ?? 0, p2.bank ?? 0, p3.bank ?? 0, t) * DEG,
+        mode: p1.mode ?? 'g',
+        gl: !!p1.gl,
+        gr: !!p1.gr,
       });
     }
   }
@@ -78,6 +85,10 @@ export function buildTrack(control, options = {}) {
       x: a.x + (b.x - a.x) * f,
       y: a.y + (b.y - a.y) * f,
       z: a.z + (b.z - a.z) * f,
+      bank: a.bank + (b.bank - a.bank) * f,
+      mode: a.mode,
+      gl: a.gl,
+      gr: a.gr,
       tx: 0,
       tz: 0,
       nx: 0,
@@ -126,5 +137,8 @@ export function buildTrack(control, options = {}) {
     checkpoints.push({ index, s: p.s, x: p.x, z: p.z, tx: p.tx, tz: p.tz });
   }
 
-  return { points, length, spacing: step, width, checkpoints };
+  // Which resampled point each control point sits at.
+  const controlIndex = control.map((_, i) => Math.round(cum[i * DENSE_PER_SEGMENT] / step) % count);
+
+  return { points, length, spacing: step, width, checkpoints, controlIndex };
 }

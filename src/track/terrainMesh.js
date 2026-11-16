@@ -1,16 +1,19 @@
 import * as THREE from 'three';
+import { fbm } from '../maps/util.js';
 
-const GRASS_LOW = new THREE.Color(0x2f5d2a);
-const GRASS_HIGH = new THREE.Color(0x6b8f3c);
-const ROCK = new THREE.Color(0x7b7468);
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
-function smooth(t) {
-  const c = Math.min(1, Math.max(0, t));
-  return c * c * (3 - 2 * c);
-}
-
-// A square grid of terrain centred on the origin, coloured by height and steepness.
-export function buildTerrainMesh(world, { size = 2800, cell = 8 } = {}) {
+// A square grid of terrain, coloured by height, steepness and the map's palette.
+// theme: { terrainSize, terrainCell, ground: { low, high, rock, snow?, snowLine? }, water? }
+export function buildTerrainMesh(world, theme = {}, center = { x: 0, z: 0 }) {
+  const { terrainSize: size = 2800, terrainCell: cell = 8, ground = {} } = theme;
+  const low = new THREE.Color(ground.low ?? 0x2f5d2a);
+  const high = new THREE.Color(ground.high ?? 0x6b8f3c);
+  const rock = new THREE.Color(ground.rock ?? 0x7b7468);
+  const snow = new THREE.Color(ground.snow ?? 0xffffff);
   const segments = Math.round(size / cell);
   const side = segments + 1;
   const half = size / 2;
@@ -20,15 +23,15 @@ export function buildTerrainMesh(world, { size = 2800, cell = 8 } = {}) {
 
   for (let j = 0; j < side; j++) {
     for (let i = 0; i < side; i++) {
-      const x = -half + i * cell;
-      const z = -half + j * cell;
+      const x = center.x - half + i * cell;
+      const z = center.z - half + j * cell;
       const y = world.terrainHeight(x, z);
       const k = (j * side + i) * 3;
       positions[k] = x;
       positions[k + 1] = y;
       positions[k + 2] = z;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
     }
   }
 
@@ -41,12 +44,8 @@ export function buildTerrainMesh(world, { size = 2800, cell = 8 } = {}) {
       const b = a + 1;
       const c = a + side;
       const d = c + 1;
-      indices[n++] = a;
-      indices[n++] = c;
-      indices[n++] = b;
-      indices[n++] = b;
-      indices[n++] = c;
-      indices[n++] = d;
+      indices.set([a, c, b, b, c, d], n);
+      n += 6;
     }
   }
 
@@ -59,18 +58,23 @@ export function buildTerrainMesh(world, { size = 2800, cell = 8 } = {}) {
   const colors = new Float32Array(side * side * 3);
   const color = new THREE.Color();
   const range = Math.max(1, maxY - minY);
+  const waterLevel = Number.isFinite(world.waterLevel) ? world.waterLevel : -Infinity;
   for (let v = 0; v < side * side; v++) {
-    const height = (positions[v * 3 + 1] - minY) / range;
-    color.copy(GRASS_LOW).lerp(GRASS_HIGH, height);
-    color.lerp(ROCK, smooth((1 - normals.getY(v) - 0.01) / 0.07));
+    const x = positions[v * 3];
+    const y = positions[v * 3 + 1];
+    const z = positions[v * 3 + 2];
+    color.copy(low).lerp(high, (y - minY) / range);
+    color.lerp(rock, smooth(0.012, 0.09, 1 - normals.getY(v)));
+    if (ground.snowLine !== undefined) color.lerp(snow, smooth(ground.snowLine, ground.snowLine + 30, y + 25 * fbm(x / 40, z / 40)));
+    if (y < waterLevel + 2) color.lerp(rock, 0.6).multiplyScalar(0.7); // wet banks
+    color.multiplyScalar(0.88 + 0.24 * fbm(x / 9, z / 9, 2)); // patchy ground
     colors[v * 3] = color.r;
     colors[v * 3 + 1] = color.g;
     colors[v * 3 + 2] = color.b;
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-  return new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
-  );
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 }));
+  mesh.receiveShadow = true;
+  return mesh;
 }
