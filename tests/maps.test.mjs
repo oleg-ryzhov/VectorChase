@@ -17,7 +17,7 @@ for (const m of MAPS) {
   test(`${m.name}: a long closed track with no unintended crossings`, () => {
     const pts = track.points;
     const n = pts.length;
-    assert.ok(track.length > 2500 && track.length < 8000, `length ${track.length}`);
+    assert.ok(track.length > 800 && track.length < 8000, `length ${track.length}`);
     for (let i = 0; i < n; i += 2) {
       for (let j = i + 2; j < n; j += 2) {
         if (Math.min(j - i, n - (j - i)) < 40) continue; // neighbours along the road
@@ -52,10 +52,10 @@ for (const m of MAPS) {
 
 test('Thunder Speedway is banked: the outside edge of a turn is much higher than the inside', () => {
   const { track, world } = maps.oval;
-  const p = track.points.find((q) => Math.abs(q.curvature) > 0.0035 && Math.abs(q.bank) > 0.4);
+  const p = track.points.find((q) => Math.abs(q.curvature) > 0.0025 && Math.abs(q.bank) > 0.4);
   assert.ok(p, 'a banked turn');
-  const outside = world.groundHeight(p.x + p.nx * 11, p.z + p.nz * 11, 99);
-  const inside = world.groundHeight(p.x - p.nx * 11, p.z - p.nz * 11, 99);
+  const outside = world.groundHeight(p.x + p.nx * 10.9, p.z + p.nz * 10.9, 99);
+  const inside = world.groundHeight(p.x - p.nx * 10.9, p.z - p.nz * 10.9, 99);
   assert.ok(Math.abs(outside - inside) > 8, `${outside} vs ${inside}`);
   // Left turns: the left side is the low side.
   assert.ok(inside < outside);

@@ -47,6 +47,7 @@ function normalizeUser(u) {
     podiums: num(u.podiums),
     points: num(u.points),
     bestLapMs: Number.isFinite(u.bestLapMs) ? u.bestLapMs : null,
+    bestLaps: Object.fromEntries(Object.entries(u.bestLaps ?? {}).filter(([, v]) => Number.isFinite(v))),
   };
 }
 
@@ -98,7 +99,7 @@ export function setUserSkin(storage, name, skinId) {
 }
 
 // result: { position, points, bestLapMs }. Returns the updated user, or null if not saved.
-export function recordRace(storage, name, { position, points, bestLapMs }) {
+export function recordRace(storage, name, { position, points, bestLapMs, map = 'oval' }) {
   return updateUser(storage, name, (u) => {
     u.races += 1;
     if (position === 1) u.wins += 1;
@@ -107,20 +108,23 @@ export function recordRace(storage, name, { position, points, bestLapMs }) {
     if (Number.isFinite(bestLapMs) && (u.bestLapMs === null || bestLapMs < u.bestLapMs)) {
       u.bestLapMs = bestLapMs;
     }
+    // Lap times only compare on the same map.
+    if (Number.isFinite(bestLapMs) && !(bestLapMs >= (u.bestLaps[map] ?? Infinity))) u.bestLaps[map] = bestLapMs;
   });
 }
 
-function compareUsers(a, b) {
+const compareUsers = (map) => (a, b) => {
   if (b.points !== a.points) return b.points - a.points;
   if (b.wins !== a.wins) return b.wins - a.wins;
-  const lapA = a.bestLapMs ?? Infinity;
-  const lapB = b.bestLapMs ?? Infinity;
+  const lapA = a.bestLaps[map] ?? Infinity;
+  const lapB = b.bestLaps[map] ?? Infinity;
   if (lapA !== lapB) return lapA - lapB;
   return a.name.localeCompare(b.name);
-}
+};
 
-export function leaderboard(storage, limit = 20) {
-  return loadUsers(storage).sort(compareUsers).slice(0, limit);
+// Ranked by points; ties go to the faster best lap on `map`.
+export function leaderboard(storage, limit = 20, map = 'oval') {
+  return loadUsers(storage).sort(compareUsers(map)).slice(0, limit);
 }
 
 function clampInt(value, lo, hi, fallback) {

@@ -170,6 +170,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     choice(maps.map((m) => [m.id, `${m.name} (${m.kind})`]), settings.map, (v) => {
       settings.map = v;
       showMapNote();
+      renderBoard();
       onMapChange(v);
     }),
     el('label', '', 'Length'),
@@ -201,7 +202,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   function renderBoard() {
     if (board.hidden) return;
     board.replaceChildren();
-    const rows = store ? leaderboard(store, 20) : [];
+    const rows = store ? leaderboard(store, 20, settings.map) : [];
     if (rows.length === 0) {
       board.append(el('div', 'mm-note', 'No scores yet. Register, then finish a race.'));
     } else {
@@ -211,7 +212,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
       table.append(head);
       rows.forEach((u, i) => {
         const tr = el('tr', user && u.name === user.name ? 'me' : '');
-        const best = u.bestLapMs === null ? '-' : formatTime(u.bestLapMs / 1000);
+        const best = u.bestLaps[settings.map] === undefined ? '-' : formatTime(u.bestLaps[settings.map] / 1000);
         for (const cell of [i + 1, u.name, u.points, u.wins, u.races, best]) {
           tr.append(el('td', '', String(cell)));
         }

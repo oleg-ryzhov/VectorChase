@@ -7,13 +7,13 @@ export const WALL_HEIGHT = 1.2; // m
 
 const SHOULDER = 14; // m of flat ground beside the road edge
 const BLEND = 50; // m over which the terrain eases from road height to its natural height
-const ROAD_DEPTH = 0.1; // terrain sits this far under the road so the road mesh never flickers
+const ROAD_DEPTH = 0.3; // terrain sits this far under the road so the road mesh never flickers
 const LIP = 1.5; // m over which the driving surface drops to the terrain at the road edge
 const SURFACE_FADE = 1.5; // m over which tarmac turns into grass at the road edge
 const GRASS_GRIP = 0.55; // tire grip on grass compared with tarmac
 const GRASS_DRAG = 4; // rolling resistance on grass compared with tarmac
 const STEP_UP = 0.9; // m a car can climb in one go; anything taller is a wall
-const SOLID_STEP = 1.1; // terrain this far above the car blocks it
+const SOLID_STEP = 0.6; // terrain this far above the car blocks it
 const LAYER_CELL = 30;
 const LAYER_GAP = 40; // track points apart that count as a different stretch of road
 
@@ -112,6 +112,27 @@ export function createWorld(track, baseHeight = () => 0, opts = {}) {
 
   // ---- Terrain: natural ground, flattened beside ground-level road, plus features ----
   const groundGrid = buildGrid(points, reach, (p) => p.mode === 'g');
+  const bridgeGrid = buildGrid(points, LAYER_CELL, (p) => p.mode === 'b');
+
+  // Terrain never rises into a bridge deck: it is cut away just under it.
+  function bridgeLimit(x, z) {
+    const cx = Math.floor(x / LAYER_CELL);
+    const cz = Math.floor(z / LAYER_CELL);
+    let best = null;
+    let bestD = half + 8;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (const i of bridgeGrid.get((cx + dx) * 100003 + (cz + dz)) ?? []) {
+          const d = Math.hypot(points[i].x - x, points[i].z - z);
+          if (d < bestD) {
+            bestD = d;
+            best = points[i];
+          }
+        }
+      }
+    }
+    return best && { limit: best.y - 1.9, d: bestD };
+  }
   const featureHeight = (x, z) => {
     let h = 0;
     for (const f of features) h += f(x, z);
@@ -150,6 +171,8 @@ export function createWorld(track, baseHeight = () => 0, opts = {}) {
       h = level + (base - level) * t;
       if (withLip) h += ROAD_DEPTH * (1 - smooth01((hit.dist - half) / LIP));
     }
+    const bridge = bridgeLimit(x, z);
+    if (bridge && h > bridge.limit) h = bridge.limit + (h - bridge.limit) * smooth01((bridge.d - half - 2) / 6);
     return h + featureHeight(x, z);
   }
 
@@ -245,7 +268,21 @@ export function createWorld(track, baseHeight = () => 0, opts = {}) {
         }
       }
       if (!best) return null;
-      return { offset: best.offset, nx: best.nx, nz: best.nz, wall: !(best.offset > 0 ? best.gr : best.gl) };
+      return { offset: best.offset, nx: best.nx, nz: best.nz, mode: best.mode, wall: !(best.offset > 0 ? best.gr : best.gl) };
+    },
+    // Highest surface at or just above height y (null if there is none): where a camera can rest.
+    floorHeight(x, z, y) {
+      const t = terrainAt(x, z, carveHit(x, z), false);
+      let best = t <= y + 1 ? t : null;
+      for (const l of layerHits(x, z)) {
+        const h = roadHeight(l);
+        if (Math.abs(l.offset) <= half + 3 && h <= y + 1 && (best === null || h > best)) best = h;
+      }
+      return best;
+    },
+    // True when another road passes under (x, z) at least 2 m below height y (for placing bridge pillars).
+    roadBelow(x, z, y, margin = 2) {
+      return layerHits(x, z).some((l) => Math.abs(l.offset) < half + margin && roadHeight(l) < y - 2);
     },
     solid,
     hazard: (x, z, y) => y < waterLevel + 0.3 || y < killY,

@@ -26,6 +26,7 @@ export function prepareMap(config) {
       armAfter: s.armAfter ?? 120,
       reach: halfWidth + 3, // must be back on the road itself
       window: 12,
+      bot: s.bot ?? null, // { aim: [x, z], speed } for bots that try the jump
     };
   });
   const features = config.features ?? [];

@@ -189,6 +189,7 @@ function respawn(e) {
   e.tracker.setProgress(e.tracker.total);
   e.stuckTime = 0;
   e.offRoadTime = 0;
+  e.driver?.abort();
 }
 
 // ---- Menu and race flow ---------------------------------------------------------------
@@ -284,6 +285,7 @@ function finishRace() {
         position,
         points: pointsFor(position),
         bestLapMs: player.bestLap === null ? null : Math.round(player.bestLap * 1000),
+        map: prepared.config.id,
       });
     saveNote = saved
       ? `Saved to the leaderboard as ${state.user} (+${pointsFor(position)} points).`
@@ -387,11 +389,13 @@ function fixedUpdate(dt) {
     // Falling into water or off the world puts the car back on the road.
     if (world.hazard(e.car.x, e.car.z, e.car.y)) respawn(e);
 
-    // Bots that get stuck or lost are put back on the road.
-    if (!e.isPlayer) {
-      e.stuckTime = e.car.u < 1.5 ? e.stuckTime + dt : 0;
+    // Cars that get stuck or lost are put back on the road (the player gets longer, since there is no
+    // reset key).
+    if (!e.isPlayer || race.phase === 'racing') {
+      e.stuckTime = Math.abs(e.car.u) < 1.5 ? e.stuckTime + dt : 0;
       e.offRoadTime = e.tracker.offTrack ? e.offRoadTime + dt : 0;
-      if (e.stuckTime > STUCK_SECONDS || e.offRoadTime > OFF_ROAD_SECONDS) respawn(e);
+      const slack = e.isPlayer ? 2 : 1;
+      if (e.stuckTime > STUCK_SECONDS * slack || e.offRoadTime > OFF_ROAD_SECONDS * slack) respawn(e);
     }
   }
   race.update(dt);
@@ -407,7 +411,7 @@ function updateModel(e, alpha) {
   const c = e.car;
   const p = c.prev;
   const mix = (a, b) => a + (b - a) * alpha;
-  const pose = { x: mix(p.x, c.x), y: mix(p.y, c.y), z: mix(p.z, c.z), yaw: mix(p.yaw, c.yaw) };
+  const pose = { x: mix(p.x, c.x), y: mix(p.y, c.y), z: mix(p.z, c.z), yaw: mix(p.yaw, c.yaw), roll: mix(p.roll, c.roll) };
   e.model.update({
     ...pose,
     steer: mix(p.steer, c.steer),
@@ -419,6 +423,27 @@ function updateModel(e, alpha) {
     brake: c.brake,
   });
   return pose;
+}
+
+let tunnelLight = 0; // 0..1, how far inside a tunnel the player is
+let camRoll = 0; // rad the camera leans with a banked road
+const lightBase = { sun: 2, hemi: 1, headlight: 0 };
+
+// Puts the free camera at (x, y, z) without letting it sink into the ground, pop onto the mountain above a
+// tunnel, or leave the tunnel walls.
+function placeAwayFromGround(x, y, z, me) {
+  const lat = world.lateral(x, z, me.y + 1);
+  const inTunnel = lat?.mode === 't';
+  if (inTunnel) {
+    const limit = world.wallOffset - 1.2;
+    const excess = lat.offset - Math.max(-limit, Math.min(limit, lat.offset));
+    x -= lat.nx * excess;
+    z -= lat.nz * excess;
+  }
+  const floor = world.floorHeight(x, z, me.y + 2);
+  if (floor !== null) y = Math.max(y, floor + 1.5);
+  if (inTunnel && floor !== null) y = Math.min(y, floor + 5);
+  camera.position.set(x, y, z);
 }
 
 function render(alpha) {
@@ -454,6 +479,14 @@ function render(alpha) {
   chaseY += (me.y + CHASE_HEIGHT - chaseY) * (1 - Math.exp(-frameDt * 5));
   orbitAngle += frameDt * 0.35;
 
+  // Tunnels are dark, and the camera leans with a banked road.
+  const lat = racing ? world.lateral(me.x, me.z, me.y) : null;
+  tunnelLight += ((lat?.mode === 't' ? 1 : 0) - tunnelLight) * Math.min(1, frameDt * 4);
+  sun.intensity = lightBase.sun * (1 - 0.9 * tunnelLight);
+  hemi.intensity = lightBase.hemi * (1 - 0.65 * tunnelLight);
+  headlight.intensity = Math.max(lightBase.headlight, 40 * tunnelLight);
+  camRoll += (me.roll * (view === 'first' ? 0.9 : 0.5) - camRoll) * Math.min(1, frameDt * 6);
+
   if (view === 'first') {
     player.model.placeCamera(camera);
   } else if (view === 'chase' || view === 'rear') {
@@ -467,8 +500,7 @@ function render(alpha) {
     const camX = me.x + flat * Math.cos(o.angle);
     const camZ = me.z + flat * Math.sin(o.angle);
     const camY = me.y + 1.0 + o.radius * Math.sin(o.pitch);
-    // Stay above the hill under the camera.
-    camera.position.set(camX, Math.max(camY, world.groundHeight(camX, camZ, me.y + 2) + 1.5), camZ);
+    placeAwayFromGround(camX, camY, camZ, me);
     camera.lookAt(
       me.x - CHASE_LOOK_AHEAD * Math.cos(o.angle),
       me.y + 1.0,
@@ -477,9 +509,11 @@ function render(alpha) {
   } else {
     const camX = me.x + Math.cos(orbitAngle) * ORBIT_RADIUS;
     const camZ = me.z + Math.sin(orbitAngle) * ORBIT_RADIUS;
-    camera.position.set(camX, Math.max(me.y + ORBIT_HEIGHT, world.groundHeight(camX, camZ, me.y + 2) + 1.5), camZ);
+    placeAwayFromGround(camX, me.y + ORBIT_HEIGHT, camZ, me);
     camera.lookAt(me.x, me.y + 0.8, me.z);
   }
+
+  if (view !== 'orbit') camera.rotateZ(-camRoll);
 
   // Changing view blends from the last camera pose instead of jumping.
   if (view !== lastView) {
@@ -578,11 +612,11 @@ function installMap(next) {
   const l = mapScene.lights;
   hemi.color.set(l.hemi.sky);
   hemi.groundColor.set(l.hemi.ground);
-  hemi.intensity = l.hemi.intensity;
   sun.color.set(l.sun.color);
-  sun.intensity = l.sun.intensity;
+  lightBase.sun = l.sun.intensity;
+  lightBase.hemi = l.hemi.intensity;
+  lightBase.headlight = l.headlights ? 40 : 0;
   sunDir.set(...l.dir).normalize();
-  headlight.intensity = l.headlights ? 40 : 0;
 
   clearBots();
   effects.clear();

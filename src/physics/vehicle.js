@@ -237,17 +237,15 @@ export class Vehicle {
     }
     const ballistic = this.y + this.vy * dt - 0.5 * G * dt * dt;
     if (!this.airborne) {
-      const rise = ground - this.y;
-      if (rise > STEP_SNAP) {
-        this.y = ground; // ran into a step: no launch
-        this.vy = 0;
-      } else if (ground < ballistic - TAKEOFF_GAP) {
+      // The car can only climb as fast as it travels: anything steeper is a wall (see collisions).
+      const rise = Math.min(ground - this.y, 0.02 + Math.abs(this.u) * dt);
+      if (ground < ballistic - TAKEOFF_GAP) {
         this.airborne = true;
         this.y = ballistic;
         this.vy -= G * dt;
       } else {
         this.vy = clamp(rise / dt, -40, 40);
-        this.y = ground;
+        this.y += rise;
       }
     } else if (ballistic <= ground && ground - this.y <= STEP_SNAP) {
       // Touchdown: keep the speed along the road, lose the part that went into it.

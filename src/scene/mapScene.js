@@ -166,7 +166,7 @@ export function buildMapScene(prepared) {
       const p = pts[i];
       const top = p.y - BRIDGE_DEPTH;
       const ground = world.terrainHeight(p.x, p.z);
-      if (top - ground > 1.5) concrete.box(p.x, ground - 2, p.z, 2.2, top - ground + 2, Math.min(hw * 1.4, 7), Math.atan2(p.tz, p.tx));
+      if (top - ground > 1.5 && !world.roadBelow(p.x, p.z, top, 5)) concrete.box(p.x, ground - 2, p.z, 2.2, top - ground + 2, Math.min(hw * 1.4, 7), Math.atan2(p.tz, p.tx));
     }
   }
   if (!concrete.empty) add(new THREE.Mesh(concrete.geometry(), stoneMat));

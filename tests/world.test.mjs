@@ -24,9 +24,9 @@ test('the whole road width is flat across', () => {
   }
 });
 
-test('the terrain mesh sits 0.1 m under the road', () => {
+test('the terrain mesh sits 0.3 m under the road', () => {
   const p = track.points[100];
-  assert.ok(Math.abs(world.terrainHeight(p.x, p.z) - (p.y - 0.1)) < 1e-6);
+  assert.ok(Math.abs(world.terrainHeight(p.x, p.z) - (p.y - 0.3)) < 1e-6);
 });
 
 test('far from the road the ground is the natural height', () => {
