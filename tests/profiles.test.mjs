@@ -98,9 +98,20 @@ test('data is stored as readable plain text', () => {
 
 test('settings are validated when loaded', () => {
   const store = fakeStorage();
-  assert.deepEqual(loadSettings(store), { user: null, skin: 'red', laps: 3, bots: 3, difficulty: 'medium', map: 'oval' });
+  assert.deepEqual(loadSettings(store), { user: null, skin: 'red', laps: 3, bots: 3, botsOn: true, ghostMode: 'auto', sound: 'medium', difficulty: 'medium', map: 'oval' });
   store.setItem(SETTINGS_KEY, JSON.stringify({ user: 'Oleg', skin: 'blue', laps: 99, bots: 0, difficulty: 'x' }));
-  assert.deepEqual(loadSettings(store), { user: 'Oleg', skin: 'blue', laps: 5, bots: 1, difficulty: 'medium', map: 'oval' });
+  assert.deepEqual(loadSettings(store), { user: 'Oleg', skin: 'blue', laps: 5, bots: 1, botsOn: true, ghostMode: 'auto', sound: 'medium', difficulty: 'medium', map: 'oval' });
+  store.setItem(SETTINGS_KEY, JSON.stringify({ sound: 'high' }));
+  assert.equal(loadSettings(store).sound, 'high');
+  store.setItem(SETTINGS_KEY, JSON.stringify({ sound: 'toString' }));
+  assert.equal(loadSettings(store).sound, 'medium');
+  store.setItem(SETTINGS_KEY, JSON.stringify({ ghostMode: 'on' }));
+  assert.equal(loadSettings(store).ghostMode, 'on');
+  store.setItem(SETTINGS_KEY, JSON.stringify({ ghostMode: 'x' }));
+  assert.equal(loadSettings(store).ghostMode, 'auto');
+  store.setItem(SETTINGS_KEY, JSON.stringify({ botsOn: false }));
+  assert.equal(loadSettings(store).botsOn, false);
+  store.setItem(SETTINGS_KEY, JSON.stringify({ user: 'Oleg', skin: 'blue', laps: 99, bots: 0, difficulty: 'x' }));
   store.setItem(SETTINGS_KEY, '{oops');
   assert.equal(loadSettings(store).laps, 3);
   assert.equal(saveSettings(store, { user: null, skin: 'red', laps: 2, bots: 2, difficulty: 'hard' }), true);
@@ -113,4 +124,12 @@ test('blocked storage fails safely', () => {
   assert.deepEqual(leaderboard(blockedStorage), []);
   assert.equal(saveSettings(blockedStorage, {}), false);
   assert.equal(loadSettings(null).laps, 3);
+});
+
+test('solo races only update best laps', () => {
+  const store = fakeStorage();
+  registerUser(store, 'Oleg');
+  recordRace(store, 'Oleg', { position: 1, points: 0, bestLapMs: 80000, map: 'oval', solo: true });
+  const u = findUser(store, 'Oleg');
+  assert.deepEqual([u.races, u.wins, u.podiums, u.points, u.bestLaps.oval], [0, 0, 0, 0, 80000]);
 });

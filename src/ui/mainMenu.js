@@ -42,11 +42,13 @@ const DIFFICULTIES = [
   ['hard', 'Hard'],
 ];
 
+import { loadGhost, deleteGhost } from '../race/ghost.js';
+
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
 // callbacks: onSkinChange(skinId) when the paint changes, onStart() for "Start race".
 // They are only called after the menu is built, never during createMainMenu.
-export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart }) {
+export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onSoundChange = () => {}, onStart }) {
   addStyle(STYLE);
   const store = getStorage(); // null if the browser blocks storage
 
@@ -123,7 +125,8 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   const skinName = el('div', 'mm-note');
   for (const skin of skins) {
     const swatch = button('', 'mm-swatch');
-    swatch.style.background = hex(skin.color);
+    // A slice of the stripe colour shows which skins have an accent.
+    swatch.style.background = skin.accent === undefined ? hex(skin.color) : `linear-gradient(135deg, ${hex(skin.color)} 62%, ${hex(skin.accent)} 62%)`;
     swatch.title = skin.name;
     swatch.dataset.id = skin.id;
     swatch.addEventListener('click', () => setSkin(skin.id));
@@ -170,17 +173,61 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     choice(maps.map((m) => [m.id, `${m.name} (${m.kind})`]), settings.map, (v) => {
       settings.map = v;
       showMapNote();
+      renderGhostInfo();
       renderBoard();
       onMapChange(v);
     }),
     el('label', '', 'Length'),
     choice(LAP_CHOICES, settings.laps, (v) => (settings.laps = Number(v))),
+    el('label', '', 'Bots'),
+    choice([[1, 'On'], [0, 'Off (solo)']], settings.botsOn ? 1 : 0, (v) => (settings.botsOn = v === '1')),
+    el('label', '', 'Sound'),
+    choice(
+      [
+        ['off', 'Off'],
+        ['low', 'Low'],
+        ['medium', 'Medium'],
+        ['high', 'High'],
+      ],
+      settings.sound,
+      (v) => {
+        settings.sound = v;
+        onSoundChange(v);
+      }
+    ),
+    el('label', '', 'Ghost'),
+    choice(
+      [
+        ['auto', 'Auto (when bots are off)'],
+        ['on', 'Always on'],
+        ['off', 'Off'],
+      ],
+      settings.ghostMode,
+      (v) => (settings.ghostMode = v)
+    ),
     el('label', '', 'Opponents'),
     choice(BOT_CHOICES, settings.bots, (v) => (settings.bots = Number(v))),
     el('label', '', 'Difficulty'),
     choice(DIFFICULTIES, settings.difficulty, (v) => (settings.difficulty = v))
   );
-  root.append(el('h2', '', 'Race'), grid, mapNote);
+  const ghostNote = el('div', 'mm-note');
+  const ghostDelete = button('Delete ghost');
+  ghostDelete.addEventListener('click', () => {
+    if (store) deleteGhost(store, user ? user.name : 'guest', settings.map);
+    renderGhostInfo();
+  });
+  function renderGhostInfo() {
+    const who = user ? user.name : 'guest';
+    const fly = store ? loadGhost(store, who, settings.map, 'fly') : null;
+    const start = store ? loadGhost(store, who, settings.map, 'start') : null;
+    const parts = [];
+    if (fly) parts.push(`flying lap ${formatTime(fly.ms / 1000)}`);
+    if (start) parts.push(`standing start ${formatTime(start.ms / 1000)}`);
+    ghostNote.textContent = parts.length ? `Ghost on this map: ${parts.join(' · ')} ` : 'No ghost on this map yet: it is recorded while you race.';
+    ghostDelete.hidden = parts.length === 0;
+    if (parts.length) ghostNote.append(ghostDelete);
+  }
+  root.append(el('h2', '', 'Race'), grid, mapNote, ghostNote);
 
   // Buttons and leaderboard
   const startButton = button('Start race', 'mm-primary');
@@ -228,6 +275,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     renderPlayer();
     renderSkin();
     renderBoard();
+    renderGhostInfo();
   }
 
   document.body.appendChild(root);
@@ -251,7 +299,9 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
         name: user ? user.name : 'Guest',
         skinId,
         laps: settings.laps,
-        bots: settings.bots,
+        bots: settings.botsOn ? settings.bots : 0,
+        sound: settings.sound,
+        ghost: settings.ghostMode === 'on' || (settings.ghostMode === 'auto' && !settings.botsOn),
         difficulty: settings.difficulty,
         map: settings.map,
       };

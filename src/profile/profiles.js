@@ -2,11 +2,14 @@
 // There are NO passwords and NO encryption yet: anyone using this browser can sign in as any name.
 // Pure logic apart from the storage object passed in (localStorage in the browser, a fake in tests).
 
+import { SOUND_LEVELS } from '../audio/mapping.js';
+
 export const PROFILES_KEY = 'vectorchase.profiles';
 export const SETTINGS_KEY = 'vectorchase.settings';
 
 const NAME_PATTERN = /^[A-Za-z0-9_-]{3,16}$/;
 const DIFFICULTY_IDS = ['easy', 'medium', 'hard'];
+const GHOST_MODES = ['auto', 'on', 'off']; // auto: only when bots are off
 
 function readJson(storage, key, fallback) {
   try {
@@ -99,12 +102,15 @@ export function setUserSkin(storage, name, skinId) {
 }
 
 // result: { position, points, bestLapMs }. Returns the updated user, or null if not saved.
-export function recordRace(storage, name, { position, points, bestLapMs, map = 'oval' }) {
+// solo: a race without bots counts for lap times only, not for races, wins, podiums or points.
+export function recordRace(storage, name, { position, points, bestLapMs, map = 'oval', solo = false }) {
   return updateUser(storage, name, (u) => {
-    u.races += 1;
-    if (position === 1) u.wins += 1;
-    if (position <= 3) u.podiums += 1;
-    u.points += points;
+    if (!solo) {
+      u.races += 1;
+      if (position === 1) u.wins += 1;
+      if (position <= 3) u.podiums += 1;
+      u.points += points;
+    }
     if (Number.isFinite(bestLapMs) && (u.bestLapMs === null || bestLapMs < u.bestLapMs)) {
       u.bestLapMs = bestLapMs;
     }
@@ -141,6 +147,9 @@ export function loadSettings(storage) {
     skin: typeof s.skin === 'string' ? s.skin : 'red',
     laps: clampInt(s.laps, 1, 5, 3),
     bots: clampInt(s.bots, 1, 5, 3),
+    botsOn: s.botsOn !== false,
+    sound: Object.hasOwn(SOUND_LEVELS, s.sound) ? s.sound : 'medium',
+    ghostMode: GHOST_MODES.includes(s.ghostMode) ? s.ghostMode : 'auto',
     difficulty: DIFFICULTY_IDS.includes(s.difficulty) ? s.difficulty : 'medium',
     map: typeof s.map === 'string' ? s.map : 'oval',
   };

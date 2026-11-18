@@ -32,6 +32,33 @@ const headlightMat = new THREE.MeshStandardMaterial({
 });
 const marker = new THREE.MeshBasicMaterial({ color: 0xffd166 });
 
+// Reflection map for the paint, glass and alloys (see environment.js). Set once, before cars are made.
+let envMap = null;
+export function setCarEnvironment(texture) {
+  envMap = texture;
+  for (const m of [glass, alloy, brakeDisc]) {
+    m.envMap = texture;
+    m.needsUpdate = true;
+  }
+}
+
+let glowTexture = null; // soft round fade, stretched into the pool of light under a car
+function getGlowTexture() {
+  if (glowTexture) return glowTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const g = canvas.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  glowTexture = new THREE.CanvasTexture(canvas);
+  glowTexture.colorSpace = THREE.SRGBColorSpace;
+  return glowTexture;
+}
+
 function polygon(points) {
   const shape = new THREE.Shape();
   points.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y)));
@@ -130,7 +157,7 @@ function createWheel() {
 }
 
 export function createCarModel(
-  skin = { color: 0xc1121f, metalness: 0.35, roughness: 0.3, clearcoat: 1 }
+  skin = { color: 0xc1121f, metalness: 0.35, roughness: 0.3, clearcoat: 1, accent: 0xf4f4f4 }
 ) {
   // Paint and tail lights belong to this car, so every car can have its own colour and brake lights.
   // The clearcoat layer gives the glossy, smooth lacquer look.
@@ -140,6 +167,23 @@ export function createCarModel(
     roughness: skin.roughness,
     clearcoat: skin.clearcoat ?? 1,
     clearcoatRoughness: 0.06,
+    iridescence: skin.iridescence ?? 0,
+    iridescenceIOR: 1.4,
+    iridescenceThicknessRange: [150, 650],
+    envMap,
+    envMapIntensity: 1.15,
+  });
+  // Stripes and neon strips use one material; it glows more on skins that have an aura.
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.2, roughness: 0.35 });
+  const auraMat = new THREE.MeshBasicMaterial({
+    map: getGlowTexture(),
+    transparent: true,
+    opacity: 0.75,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   });
   const taillightMat = new THREE.MeshStandardMaterial({
     color: 0x330000,
@@ -206,6 +250,34 @@ export function createCarModel(
     bodyContent.add(box(0.12, 0.08, 0.2, paint, 0.55, 1.0, side * 0.92)); // mirrors
   }
 
+  // Stripes along the bonnet, roof and boot, following the body line (top surface plus the bevel).
+  const stripes = new THREE.Group();
+  const stripe = ([x0, y0], [x1, y1], lift, z) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const angle = Math.atan2(y1 - y0, x1 - x0);
+    const s = box(len + 0.03, 0.012, 0.08, accentMat, (x0 + x1) / 2 - Math.sin(angle) * lift, (y0 + y1) / 2 + Math.cos(angle) * lift, z);
+    s.rotation.z = angle;
+    stripes.add(s);
+  };
+  for (const z of [-0.09, 0.09]) {
+    stripe([1.05, 0.87], [1.9, 0.7], 0.04, z); // bonnet
+    stripe([1.9, 0.7], [2.2, 0.55], 0.04, z);
+    stripe([-2.25, 0.82], [-1.2, 0.9], 0.04, z); // boot
+    stripe([-0.85, 1.25], [-0.1, 1.33], 0.02, z); // roof
+    stripe([-0.1, 1.33], [0.45, 1.3], 0.02, z);
+  }
+  bodyContent.add(stripes);
+
+  // Aura: neon strips along the sills and a pool of light on the road under the car.
+  const neon = new THREE.Group();
+  for (const side of [-1, 1]) neon.add(box(1.7, 0.03, 0.02, accentMat, -0.05, 0.25, side * 0.97));
+  bodyContent.add(neon);
+  const aura = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 3.2), auraMat);
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.05;
+  aura.renderOrder = 2;
+  root.add(aura);
+
   // Interior: floor, dashboard and steering wheel.
   bodyContent.add(box(1.75, 0.02, 1.4, dark, -0.325, 0.91, 0));
   bodyContent.add(box(0.45, 0.12, 1.5, dark, 0.78, 0.96, 0));
@@ -246,6 +318,7 @@ export function createCarModel(
     const scale = spec.wheelRadius / MODEL_WHEEL_RADIUS;
     const wheelX = [spec.cgToFront, spec.cgToFront, -spec.cgToRear, -spec.cgToRear];
     bodyContent.position.x = spec.cgToFront - MODEL_FRONT_AXLE_X;
+    aura.position.x = bodyContent.position.x - 0.06;
     bodyPivot.position.y = BODY_PIVOT_Y + (spec.wheelRadius - MODEL_WHEEL_RADIUS);
     for (let i = 0; i < 4; i++) {
       pivots[i].position.set(wheelX[i], spec.wheelRadius, wheelZ[i]);
@@ -276,6 +349,14 @@ export function createCarModel(
   }
 
   function setSkin(next) {
+    stripes.visible = next.accent !== undefined;
+    neon.visible = next.glow !== undefined;
+    aura.visible = next.glow !== undefined;
+    accentMat.color.set(next.accent ?? 0xffffff);
+    accentMat.emissive.set(next.glow !== undefined ? (next.accent ?? next.glow) : 0x000000);
+    accentMat.emissiveIntensity = 1.1;
+    auraMat.color.set(next.glow ?? 0x000000);
+    paint.iridescence = next.iridescence ?? 0;
     paint.color.set(next.color);
     paint.metalness = next.metalness;
     paint.roughness = next.roughness;
@@ -288,8 +369,12 @@ export function createCarModel(
       if (o.geometry) o.geometry.dispose();
     });
     paint.dispose();
+    accentMat.dispose();
+    auraMat.dispose();
     taillightMat.dispose();
   }
+
+  setSkin(skin);
 
   return { root, update, placeCamera, applyDimensions, setSkin, dispose };
 }

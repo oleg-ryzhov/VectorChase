@@ -31,6 +31,7 @@ See `docs/DESIGN.md`.
 - W / S: accelerate / brake (hold S when stopped to reverse)
 - A / D: steer
 - C: cycle the camera: first-person, chase, rear (the chase view turned around)
+- Esc: pause (resume, restart the race or go to the main menu)
 - E: open or close the car settings during a race (time slows down while it is open)
 - Space: handbrake (start a drift)
 - Hold the left mouse button (or drag a finger) and move: free-look around the car, starting from the chase camera; the wheel zooms
