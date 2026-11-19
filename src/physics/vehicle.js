@@ -222,10 +222,16 @@ export class Vehicle {
 
     const rise = (fl + fr) / 2 - (rl + rr) / 2;
     const ground = (fl + fr + rl + rr) / 4;
-    this.pitch = Math.atan2(rise, a + b);
-    this.slope = rise / Math.hypot(a + b, rise);
-    this.roll = Math.atan2((fl + rl) / 2 - (fr + rr) / 2, track);
+    const groundPitch = Math.atan2(rise, a + b);
+    this._groundPitch = groundPitch;
     this._moveVertically(ground, dt);
+    // In the air the body keeps its own attitude (see _moveVertically); the terrain under the
+    // wheels, such as a gorge wall, must not tilt it.
+    if (!this.airborne) {
+      this.pitch = groundPitch;
+      this.slope = rise / Math.hypot(a + b, rise);
+      this.roll = Math.atan2((fl + rl) / 2 - (fr + rr) / 2, track);
+    }
   }
 
   // Follows the ground, or flies on a free-fall path when the ground falls away faster than gravity pulls.
@@ -249,8 +255,9 @@ export class Vehicle {
       }
     } else if (ballistic <= ground && ground - this.y <= STEP_SNAP) {
       // Touchdown: keep the speed along the road, lose the part that went into it.
-      const tan = Math.tan(this.pitch);
-      this.landing = Math.max(0, -(this.vy * Math.cos(this.pitch) - this.u * Math.sin(this.pitch)));
+      const gp = this._groundPitch ?? this.pitch;
+      const tan = Math.tan(gp);
+      this.landing = Math.max(0, -(this.vy * Math.cos(gp) - this.u * Math.sin(gp)));
       this.u = clamp(this.u + this.vy * tan, 0.5 * this.u, 1.5 * this.u);
       this.airborne = false;
       this.vy = 0;
@@ -304,7 +311,7 @@ export class Vehicle {
     this.throttle = approach(this.throttle, throttleTarget, THROTTLE_UP * dt, THROTTLE_DOWN * dt);
     this.brake = approach(this.brake, brakeTarget, BRAKE_UP * dt, BRAKE_DOWN * dt);
 
-    const steerTarget = c.analog ? clamp(c.steer, -1, 1) : (c.right ? 1 : 0) - (c.left ? 1 : 0);
+    const steerTarget = c.analog || typeof c.steer === 'number' ? clamp(c.steer, -1, 1) : (c.right ? 1 : 0) - (c.left ? 1 : 0); // exact steering from bots and touch
     const rate = steerTarget === 0 ? STEER_RETURN : STEER_RATE;
     this.steerInput = approach(this.steerInput, steerTarget, rate * dt, rate * dt);
     this.steer = this.steerInput * (spec.maxSteer / (1 + (this.u / spec.steerSpeedRef) ** 2));

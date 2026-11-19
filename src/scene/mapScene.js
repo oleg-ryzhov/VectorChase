@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Mesher } from './mesher.js';
 import { buildTerrainMesh } from '../track/terrainMesh.js';
 import { WALL_GAP, WALL_HEIGHT } from '../track/world.js';
+import { createTunnelCutter } from '../track/tunnelCut.js';
 
 const TILE = 20; // m of road per texture repeat
 const TUNNEL_WALL = 3.4; // m
@@ -202,6 +203,12 @@ export function buildMapScene(prepared) {
     if (pts[(i - 1 + n) % n].mode !== 't') strip(frames, ring(i), ring(i, 3.5));
     if (pts[j].mode !== 't') strip(frames, ring(j), ring(j, 3.5));
   }
+  // A rock hull around the liner: where the mountain is cut away at a portal, rock shows instead of sky.
+  const hull = new Mesher();
+  for (let i = 0; i < n; i++) {
+    if (pts[i].mode === 't') strip(hull, ring(i, 0.9), ring(wrap(i), 0.9));
+  }
+  if (!hull.empty) add(new THREE.Mesh(hull.geometry(), new THREE.MeshStandardMaterial({ color: theme.ground?.rock ?? 0x7b7468, roughness: 1, side: THREE.DoubleSide })));
   if (!liner.empty) {
     add(new THREE.Mesh(liner.geometry(), new THREE.MeshStandardMaterial({ color: 0x6a6e76, roughness: 0.9, side: THREE.DoubleSide })));
     add(new THREE.Mesh(frames.geometry(), new THREE.MeshStandardMaterial({ color: 0x8d8a82, roughness: 0.95, side: THREE.DoubleSide })));
@@ -210,7 +217,7 @@ export function buildMapScene(prepared) {
 
   // ---- Terrain and water ----
   const center = config.center ?? { x: 0, z: 0 };
-  add(buildTerrainMesh(world, theme, center), true);
+  add(buildTerrainMesh(world, theme, center, createTunnelCutter(pts, { halfWidth: W, wallH: TUNNEL_WALL })), true);
   if (Number.isFinite(world.waterLevel)) {
     const water = new THREE.Mesh(
       new THREE.PlaneGeometry(theme.terrainSize, theme.terrainSize),

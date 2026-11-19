@@ -39,6 +39,32 @@ export function fbm(x, z, octaves = 4) {
   return sum;
 }
 
+// Ridged noise, 0..1: sharp ridgelines and soft valleys, the shape of eroded hills.
+export function ridged(x, z, octaves = 4) {
+  let sum = 0;
+  let amp = 0.5;
+  let f = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    const r = 1 - Math.abs(2 * noise(x * f, z * f) - 1);
+    sum += amp * r * r;
+    norm += amp;
+    amp *= 0.5;
+    f *= 2;
+  }
+  return sum / norm;
+}
+
+// Natural-looking hills, about 0..1 around 0.5. The ground is bent by a slow noise first, so ridges meander
+// instead of lining up with the grid, then broad swells are mixed with eroded ridges. scale is the width of the
+// biggest hills in metres.
+export function rolling(x, z, scale) {
+  const w = scale * 0.7;
+  const wx = x + (fbm(x / w + 11.3, z / w, 3) - 0.5) * w;
+  const wz = z + (fbm(x / w, z / w + 37.9, 3) - 0.5) * w;
+  return 0.62 * fbm(wx / scale, wz / scale, 5) + 0.38 * ridged(wx / (scale * 0.8), wz / (scale * 0.8), 4);
+}
+
 // A waypoint for route(): x, z, height and optional { r (corner radius), mode, gl, gr, bank }.
 export const P = (x, z, y = 0, o = {}) => ({ x, z, y, ...o });
 
