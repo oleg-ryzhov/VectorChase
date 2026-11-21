@@ -1,7 +1,8 @@
 // All sounds are generated with the Web Audio API, so there are no sound files.
 // Browsers only allow audio after a click or key press, so nothing exists until start() is called.
-import { SOUND_LEVELS, engineFrequency, engineGain, engineCutoff, squealGain, windGain, distanceGain } from './mapping.js';
+import { engineFrequency, engineGain, engineCutoff, squealGain, windGain, distanceGain } from './mapping.js';
 
+const MASTER_SCALE = 0.45; // the engine sounds were balanced for a master gain of about 0.3
 const BOT_VOICES = 2; // only the nearest bots are heard, to keep it cheap
 
 export function createAudio() {
@@ -11,9 +12,13 @@ export function createAudio() {
   let squeal = null;
   let wind = null;
   let voices = [];
-  let level = 'medium';
-
-  const volume = () => SOUND_LEVELS[level] ?? SOUND_LEVELS.medium;
+  let sfx = null; // bus for engines, tyres, wind and crashes
+  let musicBus = null;
+  let musicTimer = null;
+  let nextNote = 0;
+  let step = 0;
+  // Volumes are 0..1. They are kept here so they apply as soon as the audio context exists.
+  let vol = { master: 0.7, sfx: 0.8, music: 0.35, sfxOn: true, musicOn: true };
   const ramp = (param, value, seconds = 0.08) => param.setTargetAtTime(value, ctx.currentTime, seconds);
 
   function loopingNoise(filterType, frequency, q) {
@@ -28,7 +33,7 @@ export function createAudio() {
     gain.gain.value = 0;
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(master);
+    gain.connect(sfx);
     src.start();
     return gain;
   }
@@ -49,7 +54,7 @@ export function createAudio() {
     sub.connect(subGain);
     subGain.connect(filter);
     filter.connect(out);
-    out.connect(master);
+    out.connect(sfx);
     saw.start();
     sub.start();
     return { out, filter, saw, sub };
@@ -74,9 +79,91 @@ export function createAudio() {
     gain.gain.exponentialRampToValueAtTime(vol, t + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
     osc.connect(gain);
-    gain.connect(master);
+    gain.connect(sfx);
     osc.start(t);
     osc.stop(t + seconds + 0.05);
+  }
+
+  // ---- Music: a small generated loop (bass, arpeggio, kick and hats), four bars of A minor, F, C, G ----
+  const BPM = 132;
+  const ROOTS = [110, 87.31, 130.81, 98];
+  const CHORDS = [[0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 4, 7]];
+
+  function note(freq, start, length, type, gain, cutoff) {
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.value = freq;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = cutoff;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, start);
+    g.gain.exponentialRampToValueAtTime(0.001, start + length);
+    osc.connect(filter);
+    filter.connect(g);
+    g.connect(musicBus);
+    osc.start(start);
+    osc.stop(start + length + 0.02);
+  }
+
+  function playStep(n, t) {
+    const bar = Math.floor(n / 16) % 4;
+    const pos = n % 16;
+    const root = ROOTS[bar];
+    if (pos % 4 === 0) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.setValueAtTime(130, t);
+      osc.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+      g.gain.setValueAtTime(0.8, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.connect(g);
+      g.connect(musicBus);
+      osc.start(t);
+      osc.stop(t + 0.22);
+    }
+    if (pos % 4 === 2) {
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuffer;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 7000;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.16, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      src.connect(hp);
+      hp.connect(g);
+      g.connect(musicBus);
+      src.start(t, Math.random(), 0.06);
+    }
+    if ([0, 3, 6, 8, 11, 14].includes(pos)) note(root, t, 0.2, 'sawtooth', 0.3, 420);
+    if (pos % 2 === 0) {
+      const semi = CHORDS[bar][[0, 1, 2, 1][(pos / 2) % 4]];
+      note(root * 4 * 2 ** (semi / 12), t, 0.16, 'triangle', 0.13, 2600);
+    }
+  }
+
+  function scheduleMusic() {
+    while (nextNote < ctx.currentTime + 0.4) {
+      playStep(step, nextNote);
+      nextNote += 60 / BPM / 4;
+      step = (step + 1) % 64;
+    }
+  }
+
+  function applyVolumes(first) {
+    if (!ctx) return;
+    ramp(master.gain, vol.master * MASTER_SCALE, first ? 0.001 : 0.05);
+    ramp(sfx.gain, vol.sfxOn ? vol.sfx : 0, 0.05);
+    const musicLevel = vol.musicOn ? vol.music * 0.8 : 0;
+    ramp(musicBus.gain, musicLevel, 0.1);
+    if (musicLevel > 0 && !musicTimer) {
+      nextNote = ctx.currentTime + 0.1;
+      musicTimer = setInterval(scheduleMusic, 100);
+    } else if (musicLevel === 0 && musicTimer) {
+      clearInterval(musicTimer);
+      musicTimer = null;
+    }
   }
 
   return {
@@ -90,9 +177,14 @@ export function createAudio() {
       if (!Ctx) return;
       ctx = new Ctx();
       master = ctx.createGain();
-      master.gain.value = volume();
+      master.gain.value = vol.master * MASTER_SCALE;
       const limiter = ctx.createDynamicsCompressor();
       master.connect(limiter);
+      sfx = ctx.createGain();
+      sfx.connect(master);
+      musicBus = ctx.createGain();
+      musicBus.connect(master);
+      applyVolumes(true);
       limiter.connect(ctx.destination);
       noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
       const data = noiseBuffer.getChannelData(0);
@@ -102,10 +194,10 @@ export function createAudio() {
       voices = Array.from({ length: 1 + BOT_VOICES }, makeVoice); // [player, nearest bots...]
     },
 
-    // id: 'off' | 'low' | 'medium' | 'high'
-    setLevel(id) {
-      level = id;
-      if (ctx) ramp(master.gain, volume(), 0.05);
+    // master, sfx and music are 0..1; sfxOn and musicOn switch a bus off completely.
+    setVolumes(next) {
+      vol = { ...vol, ...next };
+      applyVolumes(false);
     },
 
     // Call every frame. state: { active, player: { rpm, throttle, slip, speed, airborne },
@@ -145,7 +237,7 @@ export function createAudio() {
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
       src.connect(filter);
       filter.connect(gain);
-      gain.connect(master);
+      gain.connect(sfx);
       src.start(t, Math.random() * 1.5, 0.35);
       tone(55, 0.25, 0, 'sine', 0.7 * strength);
     },

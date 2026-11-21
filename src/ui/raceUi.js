@@ -1,4 +1,5 @@
 import { el, button, addStyle } from './dom.js';
+import { ensureTheme, actionButton } from './widgets.js';
 import { formatTime } from '../race/race.js';
 
 const STYLE = `
@@ -13,9 +14,12 @@ const STYLE = `
 #race-countdown{position:fixed;top:30%;left:0;right:0;text-align:center;color:#fff;font:700 120px system-ui,sans-serif;text-shadow:0 4px 24px rgba(0,0,0,.6);z-index:5;pointer-events:none}
 #race-results{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(520px,94vw);box-sizing:border-box;padding:18px 22px;background:rgba(10,13,20,.94);color:#e8ecf3;border-radius:12px;font:14px/1.4 system-ui,sans-serif;z-index:20}
 #race-results[hidden]{display:none}
-#race-pause{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:18px 22px;background:rgba(10,13,20,.94);color:#e8ecf3;border-radius:12px;font:14px/1.4 system-ui,sans-serif;z-index:20}
+#race-pause{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,94vw);box-sizing:border-box;padding:18px 22px;background:rgba(10,13,20,.94);color:#e8ecf3;border-radius:12px;font:14px/1.4 system-ui,sans-serif;z-index:20}
 #race-pause[hidden]{display:none}
-#race-pause h2{margin:0 0 10px}
+#race-pause h2{margin:0 0 12px}
+.rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rp-grid .vc-btn{min-height:52px}
+.rp-grid .wide{grid-column:1/-1}
 #race-pause button{background:#2a3242;color:inherit;border:1px solid #3d4760;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
 #race-results h2{margin:0 0 10px}
 #race-results table{width:100%;border-collapse:collapse}
@@ -53,7 +57,7 @@ export function createRaceUi() {
   return {
     setStatus({ position, total, lap, laps, time, bestLap, offTrack }) {
       status.hidden = false;
-      mainLine.textContent = `P${position}/${total} · Lap ${lap}/${laps} · ${formatTime(time)}`;
+      mainLine.textContent = `P${position}/${total} | Lap ${lap}/${laps} | ${formatTime(time)}`;
       subLine.textContent = bestLap === null ? '' : `Best lap ${formatTime(bestLap)}`;
       warning.textContent = offTrack ? 'OFF TRACK - get back on the road' : '';
     },
@@ -71,17 +75,19 @@ export function createRaceUi() {
     setCountdown(text) {
       countdown.textContent = text;
     },
-    showPause({ onResume, onRestart, onMenu }) {
+    showPause({ onResume, onRestart, onMenu, onSettings = () => {}, onTune = () => {} }) {
+      ensureTheme();
       pause.replaceChildren();
-      const resume = button('Resume');
-      const restart = button('Restart race');
-      const menu = button('Main menu');
-      resume.addEventListener('click', onResume);
-      restart.addEventListener('click', onRestart);
-      menu.addEventListener('click', onMenu);
-      const buttons = el('div', 'rr-buttons');
-      buttons.append(resume, restart, menu);
-      pause.append(el('h2', '', 'Paused'), buttons);
+      const grid = el('div', 'rp-grid');
+      const resume = actionButton('Resume', 'play', onResume, 'primary wide');
+      grid.append(
+        resume,
+        actionButton('Restart', 'reset', onRestart),
+        actionButton('Settings', 'gear', onSettings),
+        actionButton('Tune car', 'tune', onTune),
+        actionButton('Main menu', 'flag', onMenu)
+      );
+      pause.append(el('h2', '', 'Paused'), grid);
       pause.hidden = false;
     },
     hidePause() {

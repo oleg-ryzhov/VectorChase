@@ -91,7 +91,11 @@ export function createEffects(scene, world) {
   points.frustumCulled = false;
   scene.add(points);
 
+  // Switchable from the settings screen: skid marks, smoke and dust (with an amount, 0..1) and sparks.
+  const options = { skid: true, smoke: true, smokeAmount: 1, sparks: true };
+
   function emitFor(e, spec, dt) {
+    const smokeK = options.smoke ? options.smokeAmount : 0;
     const car = e.car;
     const speed = Math.hypot(car.u, car.v);
     const cos = Math.cos(car.yaw);
@@ -110,13 +114,13 @@ export function createEffects(scene, world) {
       const onRoad = car.surfaceGrip[i] > 0.9;
       const slip = car.wheelSlip[i];
 
-      if (onRoad && slip > SKID_SLIP && speed > MIN_SPEED) {
+      if (options.skid && onRoad && slip > SKID_SLIP && speed > MIN_SPEED) {
         skid.add(key, x, ground + MARK_LIFT, z);
       } else {
         skid.end(key);
       }
 
-      if (onRoad && slip > SMOKE_SLIP && speed > MIN_SPEED && Math.random() < 14 * dt) {
+      if (onRoad && slip > SMOKE_SLIP && speed > MIN_SPEED && Math.random() < 14 * dt * smokeK) {
         pool.emit({
           x,
           y: ground + 0.2,
@@ -131,7 +135,7 @@ export function createEffects(scene, world) {
           color: [0.85, 0.85, 0.85],
           lift: 0.4,
         });
-      } else if (!onRoad && speed > 4 && Math.random() < 20 * dt * Math.min(1, speed / 20)) {
+      } else if (!onRoad && speed > 4 && Math.random() < 20 * dt * smokeK * Math.min(1, speed / 20)) {
         pool.emit({
           x,
           y: ground + 0.15,
@@ -164,7 +168,12 @@ export function createEffects(scene, world) {
       material.uniforms.uScale.value = viewportHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
     },
 
+    setOptions(next) {
+      Object.assign(options, next);
+    },
+
     spark(x, y, z, count = 12) {
+      if (!options.sparks) return;
       for (let i = 0; i < count; i++) {
         const angle = Math.random() * Math.PI * 2;
         const speed = 2 + Math.random() * 5;

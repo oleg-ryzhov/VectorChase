@@ -35,7 +35,8 @@ export function createHud(track) {
   const rpmBar = el('div', 'dash-rpm');
   const rpmFill = el('div', 'dash-rpm-fill');
   rpmBar.append(rpmFill);
-  dash.append(gear, speed, el('div', 'dash-unit', 'km/h'), rpmBar);
+  const unitLabel = el('div', 'dash-unit', 'km/h');
+  dash.append(gear, speed, unitLabel, rpmBar);
   const drift = el('div');
   drift.id = 'drift';
 
@@ -114,13 +115,25 @@ export function createHud(track) {
   }
   subscribe(renderChanges);
 
+  // Which parts show while racing, and the speed units (kph or mph).
+  const options = { minimap: true, speedo: true, units: 'kph' };
+  function applyVisibility() {
+    dash.hidden = !(visible && options.speedo);
+    map.hidden = !(visible && options.minimap);
+  }
+
   return {
     setTrack: drawBase,
+    setOptions(next) {
+      Object.assign(options, next);
+      unitLabel.textContent = options.units === 'mph' ? 'mph' : 'km/h';
+      lastSpeed = null;
+      applyVisibility();
+    },
     setVisible(next) {
       if (next === visible) return;
       visible = next;
-      dash.hidden = !next;
-      map.hidden = !next;
+      applyVisibility();
       if (!next) drift.textContent = '';
       renderChanges();
     },
@@ -129,7 +142,7 @@ export function createHud(track) {
     // driftText: current drift or last banked score ('' to hide).
     update({ kmh, gear: gearLabel, rpm, redline, cars, driftText = '' }) {
       if (!visible) return;
-      const speedText = String(kmh);
+      const speedText = String(options.units === 'mph' ? Math.round(kmh * 0.621371) : kmh);
       if (speedText !== lastSpeed) speed.textContent = lastSpeed = speedText;
       if (gearLabel !== lastGear) gear.textContent = lastGear = gearLabel;
       const fraction = Math.max(0, Math.min(1, rpm / redline));

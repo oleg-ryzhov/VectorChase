@@ -1,6 +1,9 @@
-// On-screen controls for phones and tablets: a steering pad on the left, pedals on the right and a few
-// small buttons on top. They appear the first time the screen is touched (or at once on a touch device).
+// On-screen controls for phones and tablets. Where they sit, how big and how see-through they are comes from the
+// layout the player edits in Settings. Every control has a drawn part and a touch area that can be bigger.
 // Dragging the empty part of the screen still orbits the camera.
+import { el, addStyle } from './dom.js';
+import { icon } from './icons.js';
+import { CONTROLS, controlsFor, sanitizeLayout, boxFor } from './touchLayout.js';
 
 // Maps a finger position over the steering pad to -1 (left) .. 1 (right), with a small dead zone and a
 // gentle curve so small movements steer finely. Pure, so it can be tested.
@@ -15,146 +18,247 @@ export function padSteer(x, left, width) {
 const STYLE = `
 #touch{position:fixed;inset:0;z-index:6;pointer-events:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;font-family:system-ui,sans-serif}
 #touch[hidden]{display:none}
-#touch .t{position:absolute;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;letter-spacing:.05em;background:rgba(20,26,40,.42);border:2px solid rgba(255,255,255,.28);border-radius:18px;-webkit-tap-highlight-color:transparent}
-#touch .t.on{background:rgba(90,169,255,.55);border-color:#fff}
-#touch .pad{left:calc(10px + env(safe-area-inset-left,0px));bottom:calc(10px + env(safe-area-inset-bottom,0px));width:min(46vw,380px);height:min(34vh,190px)}
-#touch .pad i{position:absolute;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;left:50%;border-radius:50%;background:rgba(255,255,255,.5);border:3px solid #fff;pointer-events:none}
-#touch .pad b{font-size:12px;opacity:.7;position:absolute;top:8px;left:0;right:0;text-align:center}
-#touch .gas{right:calc(10px + env(safe-area-inset-right,0px));bottom:calc(10px + env(safe-area-inset-bottom,0px));width:min(20vw,150px);height:min(34vh,190px);background:rgba(60,190,110,.4)}
-#touch .gas.on{background:rgba(60,190,110,.75)}
-#touch .brk{right:calc(min(20vw,150px) + 20px + env(safe-area-inset-right,0px));bottom:calc(10px + env(safe-area-inset-bottom,0px));width:min(15vw,110px);height:min(22vh,120px);background:rgba(220,80,80,.4)}
-#touch .brk.on{background:rgba(220,80,80,.75)}
-#touch .hb{right:calc(min(20vw,150px) + 20px + env(safe-area-inset-right,0px));bottom:calc(min(22vh,120px) + 20px + env(safe-area-inset-bottom,0px));width:min(15vw,110px);height:min(11vh,60px);font-size:12px}
-#touch .top{top:calc(8px + env(safe-area-inset-top,0px));width:46px;height:46px;border-radius:50%;font-size:20px}
-#touch .rotate{inset:0;border-radius:0;background:rgba(10,13,20,.9);font-size:18px;text-align:center}
-#touch .rotate[hidden]{display:none}
+.th{position:absolute;pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent}
+.tv{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#fff;font-weight:700;font-size:11px;letter-spacing:.08em;background:rgba(18,26,44,.62);border:2px solid rgba(255,255,255,.38);border-radius:18px;pointer-events:none;transition:background .08s}
+.tv svg{flex:none}
+.tv.round{border-radius:50%}
+.tv-gas{background:rgba(40,150,90,.55)}
+.tv-brake{background:rgba(200,60,70,.5)}
+.tv.on{background:rgba(77,163,255,.78);border-color:#fff}
+.tv-gas.on{background:rgba(60,210,120,.85)}
+.tv-brake.on{background:rgba(240,80,90,.88)}
+.tv-pad{flex-direction:row;justify-content:space-between;padding:0 12px}
+.tv-knob{position:absolute;top:50%;left:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:rgba(255,255,255,.6);border:3px solid #fff}
+.t-rotate{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,13,20,.92);color:#fff;font-size:18px;text-align:center;pointer-events:auto}
+.t-rotate[hidden]{display:none}
 body.touch-ui #dash{top:168px;bottom:auto}
 `;
 
-// Callbacks: onPause, onSettings, onCamera. Returns { state, setVisible, enabled }.
-export function createTouchControls({ onPause, onSettings, onCamera }) {
+let styled = false;
+export function ensureTouchStyle() {
+  if (styled || typeof document === 'undefined') return;
+  styled = true;
+  addStyle(STYLE);
+}
+
+// The drawn part of a control. Used by the live controls and the layout editor.
+export function createVisual(id) {
+  ensureTouchStyle();
+  const def = CONTROLS[id];
+  const round = def.w === def.h;
+  const tv = el('div', `tv tv-${id}${round ? ' round' : ''}`);
+  if (id === 'steer') {
+    tv.classList.add('tv-pad');
+    tv.append(icon('left', 28), icon('wheel', 28), icon('right', 28));
+    const knob = el('div', 'tv-knob');
+    knob.hidden = true;
+    tv.append(knob);
+  } else if (id === 'left' || id === 'right') {
+    tv.append(icon(def.icon, 40));
+  } else if (round) {
+    tv.append(icon(def.icon, 26));
+  } else {
+    tv.append(icon(def.icon, 30), el('span', '', id === 'handbrake' ? 'HAND' : id.toUpperCase()));
+  }
+  return tv;
+}
+
+// Puts a touch box and its drawn box in place (in pixels).
+export function placeControl(th, tv, box, opacity) {
+  th.style.left = `${box.hitLeft}px`;
+  th.style.top = `${box.hitTop}px`;
+  th.style.width = `${box.hw}px`;
+  th.style.height = `${box.hh}px`;
+  tv.style.left = `${(box.hw - box.w) / 2}px`;
+  tv.style.top = `${(box.hh - box.h) / 2}px`;
+  tv.style.width = `${box.w}px`;
+  tv.style.height = `${box.h}px`;
+  tv.style.opacity = String(opacity);
+}
+
+// settings: from createGameSettings (optional). Callbacks: onPause, onSettings, onCamera.
+// Returns { state, enabled, setVisible, hint }.
+export function createTouchControls({ settings = null, onPause, onSettings, onCamera }) {
+  const get = (id, fallback) => settings?.get(id) ?? fallback;
   const state = { forward: false, back: false, handbrake: false, steer: 0, steering: false };
-  const api = { state, enabled: false, setVisible, hint: 'Left pad: steer · right: gas / brake · drag to look' };
-  let root = null;
+  const held = { left: false, right: false };
+  let seenTouch = false;
   let visible = false;
+  let suspended = false;
+  let root = null;
+  let items = {};
+  let rotate = null;
 
-  function build() {
-    const style = document.createElement('style');
-    style.textContent = STYLE;
-    document.head.appendChild(style);
-    root = document.createElement('div');
-    root.id = 'touch';
-    root.hidden = !visible;
-    root.addEventListener('contextmenu', (e) => e.preventDefault());
+  const coarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches && navigator.maxTouchPoints > 0;
+  const isEnabled = () => {
+    const mode = get('controls.touchMode', 'auto');
+    return mode === 'on' || (mode === 'auto' && (coarse || seenTouch));
+  };
+  const buzz = () => {
+    if (get('controls.haptics', true)) navigator.vibrate?.(8);
+  };
+  const releaseAll = () => {
+    state.forward = state.back = state.handbrake = state.steering = false;
+    state.steer = 0;
+    held.left = held.right = false;
+    root?.querySelectorAll('.on').forEach((n) => n.classList.remove('on'));
+    root?.querySelectorAll('.tv-knob').forEach((n) => (n.hidden = true));
+  };
 
-    const make = (cls, text) => {
-      const d = document.createElement('div');
-      d.className = `t ${cls}`;
-      d.textContent = text;
-      root.append(d);
-      return d;
-    };
-    // A button that is on while a finger holds it.
-    const hold = (node, key) => {
-      const set = (v) => {
-        state[key] = v;
-        node.classList.toggle('on', v);
-      };
-      node.addEventListener('pointerdown', (e) => {
-        node.setPointerCapture?.(e.pointerId);
-        set(true);
-        navigator.vibrate?.(8);
-        e.preventDefault();
-      });
-      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) node.addEventListener(type, () => set(false));
-    };
-    const tap = (node, fn) => {
-      node.addEventListener('pointerdown', (e) => {
-        navigator.vibrate?.(8);
-        fn?.();
-        e.preventDefault();
-      });
-      return node;
-    };
-
-    // Steering pad: the knob follows the finger sideways.
-    const pad = make('pad');
-    const label = document.createElement('b');
-    label.textContent = '◀  STEER  ▶';
-    const knob = document.createElement('i');
-    pad.append(label, knob);
-    let padId = null;
-    const steerTo = (e) => {
-      const r = pad.getBoundingClientRect();
-      state.steer = padSteer(e.clientX, r.left, r.width);
-      const k = Math.max(r.left + 32, Math.min(r.right - 32, e.clientX));
-      knob.style.left = `${k - r.left}px`;
-    };
-    const release = (e) => {
-      if (e.pointerId !== padId) return;
-      padId = null;
-      state.steering = false;
-      state.steer = 0;
-      knob.style.left = '50%';
-      pad.classList.remove('on');
-    };
-    pad.addEventListener('pointerdown', (e) => {
-      if (padId !== null) return;
-      padId = e.pointerId;
-      pad.setPointerCapture?.(e.pointerId);
-      state.steering = true;
-      pad.classList.add('on');
-      steerTo(e);
-      e.preventDefault();
-    });
-    pad.addEventListener('pointermove', (e) => {
-      if (e.pointerId === padId) steerTo(e);
-    });
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) pad.addEventListener(type, release);
-
-    hold(make('gas', 'GAS'), 'forward');
-    hold(make('brk', 'BRAKE'), 'back');
-    hold(make('hb', 'HANDBRAKE'), 'handbrake');
-    tap(make('top', '⏸'), onPause).style.left = 'calc(8px + env(safe-area-inset-left,0px))';
-    tap(make('top', '⚙'), onSettings).style.left = 'calc(62px + env(safe-area-inset-left,0px))';
-    tap(make('top', '◉'), onCamera).style.left = 'calc(116px + env(safe-area-inset-left,0px))';
-
-    // Portrait phones are cramped: ask for landscape.
-    const rotate = make('rotate', 'Turn your phone sideways to drive');
-    rotate.hidden = true;
-    const checkRotate = () => {
-      rotate.hidden = window.innerHeight <= window.innerWidth;
-    };
-    window.addEventListener('resize', checkRotate);
-    checkRotate();
-
-    // Never leave a pedal held if the page loses focus.
-    window.addEventListener('blur', () => {
-      state.forward = state.back = state.handbrake = state.steering = false;
-      state.steer = 0;
-      root.querySelectorAll('.on').forEach((n) => n.classList.remove('on'));
-    });
-    document.body.appendChild(root);
+  function updateArrows() {
+    state.steering = held.left || held.right;
+    state.steer = (held.right ? 1 : 0) - (held.left ? 1 : 0);
   }
 
-  function enable() {
-    if (api.enabled) return;
-    api.enabled = true;
-    document.body.classList.add('touch-ui');
-    build();
+  function wire(id, th, tv) {
+    const on = (v) => tv.classList.toggle('on', v);
+    const press = (key) => {
+      th.addEventListener('pointerdown', (e) => {
+        th.setPointerCapture?.(e.pointerId);
+        key(true);
+        on(true);
+        buzz();
+        e.preventDefault();
+      });
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+        th.addEventListener(type, () => {
+          key(false);
+          on(false);
+        });
+      }
+    };
+    if (id === 'gas') press((v) => (state.forward = v));
+    else if (id === 'brake') press((v) => (state.back = v));
+    else if (id === 'handbrake') press((v) => (state.handbrake = v));
+    else if (id === 'left' || id === 'right') {
+      press((v) => {
+        held[id] = v;
+        updateArrows();
+      });
+    } else if (id === 'steer') {
+      const knob = tv.querySelector('.tv-knob');
+      let pointer = null;
+      const steerTo = (e) => {
+        const r = th.getBoundingClientRect();
+        const sens = get('controls.sensitivity', 100) / 100;
+        state.steer = Math.max(-1, Math.min(1, padSteer(e.clientX, r.left, r.width) * sens));
+        const k = Math.max(r.left + 23, Math.min(r.right - 23, e.clientX));
+        knob.style.left = `${k - r.left - (r.width - tv.offsetWidth) / 2}px`;
+      };
+      const release = (e) => {
+        if (e.pointerId !== pointer) return;
+        pointer = null;
+        state.steering = false;
+        state.steer = 0;
+        knob.hidden = true;
+        on(false);
+      };
+      th.addEventListener('pointerdown', (e) => {
+        if (pointer !== null) return;
+        pointer = e.pointerId;
+        th.setPointerCapture?.(e.pointerId);
+        state.steering = true;
+        knob.hidden = false;
+        on(true);
+        buzz();
+        steerTo(e);
+        e.preventDefault();
+      });
+      th.addEventListener('pointermove', (e) => {
+        if (e.pointerId === pointer) steerTo(e);
+      });
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) th.addEventListener(type, release);
+    } else {
+      const action = { pause: onPause, settings: onSettings, camera: onCamera }[id];
+      th.addEventListener('pointerdown', (e) => {
+        buzz();
+        action?.();
+        e.preventDefault();
+      });
+    }
+  }
+
+  function layout() {
+    if (!root) return;
+    const entries = sanitizeLayout(settings?.getLayout?.());
+    for (const [id, { th, tv }] of Object.entries(items)) {
+      placeControl(th, tv, boxFor(id, entries[id], window.innerWidth, window.innerHeight), entries[id].opacity);
+    }
+    if (rotate) rotate.hidden = window.innerHeight <= window.innerWidth;
+  }
+
+  function build() {
+    ensureTouchStyle();
+    root?.remove();
+    items = {};
+    root = el('div');
+    root.id = 'touch';
+    root.hidden = !(visible && !suspended);
+    root.addEventListener('contextmenu', (e) => e.preventDefault());
+    for (const id of controlsFor(get('controls.scheme', 'pad'))) {
+      const th = el('div', 'th');
+      const tv = createVisual(id);
+      th.append(tv);
+      wire(id, th, tv);
+      root.append(th);
+      items[id] = { th, tv };
+    }
+    // Portrait phones are cramped: ask for landscape.
+    rotate = el('div', 't-rotate', 'Turn your phone sideways to drive');
+    root.append(rotate);
+    document.body.appendChild(root);
+    layout();
+  }
+
+  function refresh() {
+    const on = isEnabled();
+    api.enabled = on;
+    document.body.classList.toggle('touch-ui', on);
+    if (on) build();
+    else {
+      root?.remove();
+      root = null;
+      items = {};
+      releaseAll();
+    }
   }
 
   function setVisible(v) {
     visible = v;
-    if (root) root.hidden = !v;
-    if (!v) {
-      state.forward = state.back = state.handbrake = state.steering = false;
-      state.steer = 0;
-    }
+    if (root) root.hidden = !(v && !suspended);
+    if (!v) releaseAll();
   }
 
-  const coarse = window.matchMedia?.('(pointer: coarse)').matches && navigator.maxTouchPoints > 0;
-  if (coarse) enable();
-  else window.addEventListener('pointerdown', (e) => e.pointerType === 'touch' && enable(), { capture: true });
+  const api = {
+    state,
+    enabled: false,
+    setVisible,
+    // The editor hides the live controls while it shows its own copies.
+    suspend(v) {
+      suspended = v;
+      if (root) root.hidden = !(visible && !suspended);
+      if (v) releaseAll();
+    },
+    hint: 'Steer on the left, gas and brake on the right, drag to look',
+  };
+
+  window.addEventListener('resize', layout);
+  window.addEventListener('blur', releaseAll);
+  if (!coarse) {
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType === 'touch' && !seenTouch) {
+          seenTouch = true;
+          refresh();
+        }
+      },
+      { capture: true }
+    );
+  }
+  settings?.subscribe((ids) => {
+    if (ids.some((id) => id.startsWith('controls.'))) refresh();
+  });
+  refresh();
   return api;
 }

@@ -1,465 +1,346 @@
+// The car tuner (E in a race, or Tune car in the menu). Built for a phone held sideways: no scrolling, no
+// drop-downs. A few sections on a rail, rows that fit the screen, and a pager when a section needs more room.
+// Advanced sections only appear while the Advanced switch is on, and the drive share slider only for a
+// custom drive layout.
 import { PARAMS, getParam, setParam, resetParam, resetAll, subscribe } from '../config/registry.js';
-import {
-  BUILTIN_PRESETS,
-  snapshotValues,
-  applyValues,
-  cleanName,
-  listPresets,
-  readPreset,
-  savePreset,
-  deletePreset,
-} from '../config/presets.js';
+import { BUILTIN_PRESETS, snapshotValues, applyValues, cleanName, listPresets, readPreset, savePreset, deletePreset } from '../config/presets.js';
+import { el, addStyle } from './dom.js';
+import { icon } from './icons.js';
+import { ensureTheme, iconButton, actionButton, segmented, switchControl, rangeInput, createPager, onSwipe } from './widgets.js';
 
-// Three layouts of one dashboard, picked with the buttons in the header (and remembered):
-//  a "Garage":   sidebar of sections, one section at a time
-//  b "Overview": every section on one screen
-//  c "Race day": the essentials up front, every other section folded away
-const LAYOUTS = [
-  ['a', 'Garage', 'Sidebar with one section at a time'],
-  ['b', 'Overview', 'Every section on one screen'],
-  ['c', 'Race day', 'Essentials first, the rest folds away'],
+export const ROW_HEIGHT = 76; // px, the same in the CSS, so the number of rows per page can be worked out
+const SHEET_ROW = 56;
+
+// Every setting appears in exactly one section.
+export const SECTIONS = [
+  { id: 'essentials', label: 'Essentials', icon: 'tune', ids: ['chassis.mass', 'engine.power', 'drivetrain.frontBias', 'tire.friction', 'aero.downforce', 'brakes.torque', 'steering.maxAngle'] },
+  { id: 'body', label: 'Body', icon: 'chassis', advanced: true, ids: ['chassis.frontWeight', 'chassis.cgHeight', 'aero.dragArea', 'suspension.rollFront'] },
+  { id: 'power', label: 'Powertrain', icon: 'engine', advanced: true, ids: ['engine.redline', 'engine.braking', 'drivetrain.finalDrive', 'drivetrain.shiftRpm'] },
+  { id: 'grip', label: 'Grip', icon: 'grip', advanced: true, ids: ['wheel.radius', 'wheel.mass', 'tire.peakSlipAngle', 'tire.peakSlipRatio', 'tire.loadSensitivity', 'tire.rollingResistance'] },
+  { id: 'control', label: 'Control', icon: 'brakes', advanced: true, ids: ['brakes.bias', 'steering.speedRef'] },
 ];
-const LAYOUT_KEY = 'vectorchase.menuLayout';
-const ESSENTIALS = 'Essentials';
-const ACCENTS = {
-  Essentials: '#5aa9ff', Chassis: '#ffb454', Aero: '#6ee7b7', Suspension: '#c4a1ff', Engine: '#ff6b6b',
-  Drivetrain: '#ff9f43', Wheels: '#7bd5f5', Tires: '#f2d16b', Brakes: '#ff7a90', Steering: '#8be28b',
-};
-// One-tap choices that set a numeric setting (shown above its slider).
-const QUICK = {
-  'drivetrain.frontBias': [['RWD', 0], ['AWD', 50], ['FWD', 100]],
-  'tire.friction': [['Road', 1.1], ['Sport', 1.35], ['Slick', 1.7]],
-};
+
+export const DRIVE_LAYOUTS = [['rwd', 'RWD', 0], ['awd', 'AWD', 50], ['fwd', 'FWD', 100]];
+
+// How many columns and rows per page fit in a width x height area, and how many pages that makes.
+export function computePaging(width, height, rowHeight, total) {
+  const columns = width >= 560 ? 2 : 1;
+  const perPage = columns * Math.max(1, Math.floor(height / rowHeight));
+  return { columns, perPage, pages: Math.max(1, Math.ceil(total / perPage)) };
+}
 
 const STYLE = `
-#settings-menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,7,12,.55);z-index:10;font:14px/1.4 system-ui,sans-serif;color:#e8ecf3}
-#settings-menu[hidden]{display:none}
-#settings-menu *{box-sizing:border-box}
-.sm-modal{width:min(980px,96vw);height:min(660px,92vh);display:flex;flex-direction:column;background:#0f131c;border:1px solid #2b3550;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.6);overflow:hidden}
-#settings-menu button{background:#222a3b;color:inherit;border:1px solid #36415c;border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer;min-height:34px}
-#settings-menu button:hover:not(:disabled){background:#2d3750}
-#settings-menu button:disabled{opacity:.35;cursor:default}
-#settings-menu button.on{background:#2f4f8f;border-color:#6e8fd8;color:#fff}
-#settings-menu input[type=text],#settings-menu input[type=number],#settings-menu select{background:#151a26;color:inherit;border:1px solid #36415c;border-radius:8px;padding:5px 8px;font:inherit;min-height:34px}
-.sm-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;border-bottom:1px solid #222b40;background:#121826}
-.sm-head h2{margin:0 6px 0 0;font-size:17px;white-space:nowrap}
-.sm-chips{display:flex;gap:6px;flex-wrap:wrap}
-.sm-search{flex:1;min-width:140px}
-.sm-layouts{display:flex;gap:4px}
-.sm-close{width:34px;padding:0!important;font-size:16px}
-.sm-stats{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #1b2232}
-.sm-stat{flex:1;min-width:110px;background:#151b29;border:1px solid #232c42;border-radius:8px;padding:4px 10px}
-.sm-stat small{display:block;color:#8a95ab;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
-.sm-stat b{font-size:17px;font-variant-numeric:tabular-nums}
-.sm-body{flex:1;min-height:0;display:flex}
-.sm-nav{width:170px;flex:none;overflow-y:auto;padding:10px 8px;border-right:1px solid #1b2232;display:flex;flex-direction:column;gap:4px}
-.sm-nav button{display:flex;justify-content:space-between;align-items:center;text-align:left;border-left:4px solid var(--ac)!important;background:transparent!important}
-.sm-nav button.on{background:#232d45!important}
-.sm-badge{min-width:18px;text-align:center;border-radius:9px;background:#ffd166;color:#241a00;font-size:11px;font-weight:700;padding:0 5px}
-.sm-badge:empty{display:none}
-.sm-cards{flex:1;min-width:0;overflow-y:auto;padding:12px 14px;display:grid;gap:12px;align-content:start}
-.sm-modal[data-layout=b] .sm-nav{display:none}
-.sm-modal[data-layout=c] .sm-nav{display:none}
-.sm-modal[data-layout=a] .sm-cards{grid-template-columns:1fr}
-.sm-modal[data-layout=b] .sm-cards{grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
-.sm-modal[data-layout=c] .sm-cards{grid-template-columns:1fr}
-.sm-card{background:#131a28;border:1px solid #222b40;border-top:3px solid var(--ac);border-radius:10px;min-width:0}
-.sm-card[hidden]{display:none}
-.sm-card-head{display:flex;align-items:center;gap:8px;padding:8px 12px}
-.sm-card-head h3{margin:0;flex:1;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac)}
-.sm-card-head button{min-height:28px;padding:2px 8px;font-size:12px}
-.sm-modal[data-layout=c] .sm-card:not(.big) .sm-card-head{cursor:pointer}
-.sm-modal[data-layout=c] .sm-card:not(.big) .sm-card-head h3::before{content:'▸ '}
-.sm-modal[data-layout=c] .sm-card:not(.big):not(.collapsed) .sm-card-head h3::before{content:'▾ '}
-.sm-rows{display:grid;gap:0 18px;padding:0 12px 8px;grid-template-columns:1fr}
-.sm-modal[data-layout=a] .sm-rows,.sm-modal[data-layout=c] .sm-rows{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
-.sm-modal[data-layout=b] .sm-card.big{grid-column:1/-1}
-.sm-modal[data-layout=b] .sm-card.big .sm-rows{grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
-.sm-modal[data-layout=c] .sm-card.collapsed .sm-rows{display:none}
-.sm-modal[data-layout=b] .sm-desc,.sm-modal[data-layout=c] .sm-desc{display:none}
-.sm-row{padding:8px 0;border-top:1px solid #1c2435}
-.sm-row[hidden]{display:none}
-.sm-row-top{display:flex;align-items:center;gap:8px}
-.sm-label{flex:1;font-weight:600}
-.sm-row.changed .sm-label::after{content:' ●';color:#ffd166;font-size:11px}
-.sm-value{display:flex;align-items:center;gap:4px}
-.sm-value input{width:84px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
-.sm-unit{width:34px;color:#8a95ab;font-size:12px}
-.sm-reset{width:34px;padding:0!important;visibility:hidden}
-.sm-row.changed .sm-reset{visibility:visible}
-.sm-seg{display:flex;gap:4px;margin-top:6px}
-.sm-seg button{flex:1}
-.sm-track{display:flex;align-items:center;gap:6px;margin-top:6px}
-.sm-track button{width:34px;padding:0!important;font-size:18px}
-.sm-slider{position:relative;flex:1;height:30px;display:flex;align-items:center}
-.sm-slider input{width:100%;margin:0;height:30px;background:transparent;-webkit-appearance:none;appearance:none;cursor:pointer}
-.sm-slider input::-webkit-slider-runnable-track{height:8px;border-radius:4px;background:linear-gradient(to right,var(--ac) var(--pct),#2a3346 var(--pct))}
-.sm-slider input::-moz-range-track{height:8px;border-radius:4px;background:#2a3346}
-.sm-slider input::-moz-range-progress{height:8px;border-radius:4px;background:var(--ac)}
-.sm-slider input::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-6px;border-radius:50%;background:#fff;border:3px solid var(--ac)}
-.sm-slider input::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid var(--ac)}
-.sm-tick{position:absolute;top:4px;width:2px;height:22px;margin-left:-1px;background:#ffffff55;pointer-events:none;border-radius:1px}
-.sm-range{display:flex;justify-content:space-between;margin:0 40px;color:#6f7a91;font-size:11px}
-.sm-desc{margin-top:2px;color:#8a95ab;font-size:12px}
-.sm-empty{color:#8a95ab;padding:20px;text-align:center}
-.sm-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:8px 14px;border-top:1px solid #222b40;background:#121826}
-.sm-foot input[type=text]{width:140px}
-.sm-foot select{max-width:150px}
-.sm-status{flex:1;min-width:120px;color:#9ad1a0;font-size:12px}
-@media (max-width:720px){
-.sm-modal{width:100vw;height:100vh;border-radius:0}
-.sm-nav{position:static;width:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid #1b2232}
-.sm-modal[data-layout=a] .sm-body{flex-direction:column}
-.sm-rows,.sm-modal[data-layout=a] .sm-rows,.sm-modal[data-layout=c] .sm-rows{grid-template-columns:1fr}
-.sm-nav button{flex:none}
-}
+#settings-menu{z-index:24}
+.pt-main{flex:1;min-height:0;display:flex}
+.pt-rail{width:170px;flex:none;display:flex;flex-direction:column;gap:6px;padding:10px;border-right:1px solid var(--vc-line);background:#0e1522}
+.pt-rail button{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 12px;border-radius:12px;background:transparent;border:1px solid transparent;color:var(--vc-mute);font:inherit;font-weight:600;cursor:pointer;text-align:left}
+.pt-rail button.on{background:var(--vc-panel2);color:#fff;border-color:var(--vc-line);box-shadow:inset 3px 0 0 var(--vc-accent)}
+.pt-badge{margin-left:auto;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--vc-warn);color:#241a00;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.pt-badge:empty{display:none}
+.pt-content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+.pt-rows{flex:1;min-height:0;display:grid;align-content:start;column-gap:26px;padding:2px 16px;overflow:hidden}
+.pt-row{height:${ROW_HEIGHT}px;display:flex;flex-direction:column;justify-content:center;gap:2px;border-bottom:1px solid #1b2540}
+.pt-top{display:flex;align-items:center;gap:8px;min-height:36px}
+.pt-name{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pt-row.changed .pt-name::after{content:'';display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;background:var(--vc-warn)}
+.pt-num{width:84px;height:36px;padding:0 8px;text-align:right;font:inherit;font-weight:700;color:var(--vc-blue);background:#0c1220;border:1px solid var(--vc-line);border-radius:10px}
+.pt-unit{width:32px;font-size:12px;color:var(--vc-mute)}
+.pt-reset{width:36px;height:36px;visibility:hidden}
+.pt-row.changed .pt-reset{visibility:visible}
+.pt-track{display:flex;align-items:center;gap:4px}
+.pt-track .vc-iconbtn{width:40px;height:40px;background:#0c1220;border:1px solid var(--vc-line)}
+.pt-row .vc-seg{margin-top:2px}
+.pt-dep{border-left:3px solid var(--vc-blue);padding-left:10px;margin-left:-13px}
+.pt-bar{display:flex;align-items:center;gap:8px;padding:0 6px 0 0}
+.pt-bar label{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;white-space:nowrap}
+.pt-sheet{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;background:var(--vc-panel)}
+.pt-sheet .pt-list{flex:1;min-height:0;overflow:hidden;padding:6px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));column-gap:20px;align-content:start}
+.pt-entry{display:flex;align-items:center;gap:6px;height:${SHEET_ROW}px}
+.pt-entry .vc-btn{flex:1;justify-content:flex-start;min-width:0}
+.pt-save{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--vc-line)}
+.pt-save input{flex:1;min-width:0;height:44px;padding:0 12px;background:#0c1220;color:var(--vc-text);border:1px solid var(--vc-line);border-radius:12px;font:inherit}
+@media (max-width:760px){.pt-main{flex-direction:column}.pt-rail{width:auto;flex-direction:row;gap:4px;padding:6px;border-right:0;border-bottom:1px solid var(--vc-line)}.pt-rail button{flex:1;min-width:0;justify-content:center;padding:0 4px;min-height:44px}.pt-rail button .lbl{display:none}.pt-badge{margin-left:0}}
+@media (max-height:430px){.pt-rail{padding:6px;gap:4px}.pt-rail button{min-height:44px}}
 `;
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function button(text, title, className) {
-  const b = el('button', className ?? '', text);
-  b.type = 'button';
-  if (title) b.title = title;
-  return b;
-}
-
-const formatValue = (value) => String(Number(value.toFixed(4)));
-const percent = (def, value) => ((value - def.min) / (def.max - def.min)) * 100;
-
-function getStorage() {
-  try {
-    return window.localStorage;
-  } catch {
-    return null; // blocked by the browser
-  }
-}
-
-// Builds the settings dashboard from the registry. Returns { isOpen, open, close, toggle }.
-export function createSettingsMenu() {
-  const style = document.createElement('style');
-  style.textContent = STYLE;
-  document.head.appendChild(style);
+export function createSettingsMenu({ getStorage = () => null } = {}) {
+  ensureTheme();
+  addStyle(STYLE);
   const store = getStorage();
+  const byId = new Map(PARAMS.map((p) => [p.id, p]));
 
-  const rows = new Map(); // parameter id -> its controls
-  const cards = []; // { key, card, defs, items, nav, badges }
+  const root = el('div', 'vc-screen');
+  root.id = 'settings-menu';
+  root.hidden = true;
+  const panel = el('div', 'vc-panel');
+  root.append(panel);
+
   let open = false;
-  let layout = 'a';
-  try {
-    const saved = store?.getItem(LAYOUT_KEY);
-    if (LAYOUTS.some((l) => l[0] === saved)) layout = saved;
-  } catch {
-    /* keep the default */
-  }
-  let activeKey = ESSENTIALS;
-  const unfolded = new Set(); // sections opened by hand in layout c
-
-  const backdrop = el('div');
-  backdrop.id = 'settings-menu';
-  backdrop.hidden = true;
-  const modal = el('div', 'sm-modal');
-  backdrop.append(modal);
-
-  const status = el('div', 'sm-status');
-  const say = (text) => {
-    status.textContent = text;
-  };
-
-  // ---- Rows ----
-  function refresh(id, force = false) {
-    const ui = rows.get(id);
-    const value = getParam(id);
-    ui.slider.value = String(value);
-    ui.row.style.setProperty('--pct', `${percent(ui.def, value)}%`);
-    if (force || document.activeElement !== ui.number) ui.number.value = formatValue(value);
-    ui.row.classList.toggle('changed', value !== ui.def.default);
-    for (const b of ui.quick) b.classList.toggle('on', Number(b.dataset.v) === value);
-  }
-
-  const nudge = (def, direction) => setParam(def.id, Number((getParam(def.id) + direction * def.step).toFixed(6)));
-
-  function createRow(def) {
-    const row = el('div', 'sm-row');
-    row.title = def.description;
-    const label = el('label', 'sm-label', def.label);
-    const number = el('input');
-    number.type = 'number';
-    number.min = String(def.min);
-    number.max = String(def.max);
-    number.step = String(def.step);
-    number.id = `sm-${def.id}`;
-    label.htmlFor = number.id;
-    const reset = button('↺', 'Reset to stock', 'sm-reset');
-    const value = el('div', 'sm-value');
-    value.append(number, el('span', 'sm-unit', def.unit));
-    const top = el('div', 'sm-row-top');
-    top.append(label, value, reset);
-    row.append(top);
-
-    const quick = [];
-    if (QUICK[def.id]) {
-      const seg = el('div', 'sm-seg');
-      for (const [name, v] of QUICK[def.id]) {
-        const b = button(name, `${def.label}: ${v} ${def.unit}`.trim());
-        b.dataset.v = String(v);
-        b.addEventListener('click', () => setParam(def.id, v));
-        quick.push(b);
-        seg.append(b);
-      }
-      row.append(seg);
-    }
-
-    const slider = el('input');
-    slider.type = 'range';
-    slider.min = String(def.min);
-    slider.max = String(def.max);
-    slider.step = String(def.step);
-    const tick = el('i', 'sm-tick');
-    tick.style.left = `${percent(def, def.default)}%`;
-    tick.title = 'Stock value';
-    const box = el('div', 'sm-slider');
-    box.append(slider, tick);
-    const minus = button('−', 'Decrease');
-    const plus = button('+', 'Increase');
-    const track = el('div', 'sm-track');
-    track.append(minus, box, plus);
-    const range = el('div', 'sm-range');
-    range.append(el('span', '', formatValue(def.min)), el('span', '', formatValue(def.max)));
-    row.append(track, range, el('div', 'sm-desc', def.description));
-    rows.set(def.id, { def, row, slider, number, quick });
-
-    slider.addEventListener('input', () => setParam(def.id, slider.value));
-    minus.addEventListener('click', () => nudge(def, -1));
-    plus.addEventListener('click', () => nudge(def, 1));
-    // The number box is applied when committed (Enter or leaving the box), not on every key.
-    number.addEventListener('change', () => {
-      setParam(def.id, number.value);
-      refresh(def.id, true);
-    });
-    reset.addEventListener('click', () => resetParam(def.id));
-    return row;
-  }
+  let advanced = false;
+  let customDrive = false;
+  let sectionId = 'essentials';
+  let armed = null;
 
   // ---- Header ----
-  const head = el('div', 'sm-head');
-  const chips = el('div', 'sm-chips');
-  for (const preset of BUILTIN_PRESETS) {
-    const b = button(preset.name, `Apply the ${preset.name} setup`);
+  const title = el('h2', '', 'Tune car');
+  const advancedSwitch = switchControl(false, (v) => {
+    advanced = v;
+    if (!advanced) sectionId = 'essentials';
+    renderAll();
+  });
+  const advancedLabel = el('label');
+  advancedLabel.append(el('span', '', 'Advanced'), advancedSwitch.node);
+  const presetsButton = actionButton('Presets', 'car', () => openSheet(), 'small');
+  const resetButton = iconButton('reset', 'Reset everything to stock', () => {
+    if (armed) {
+      clearTimeout(armed);
+      armed = null;
+      title.textContent = 'Tune car';
+      resetAll();
+      return;
+    }
+    title.textContent = 'Tap reset again to confirm';
+    armed = setTimeout(() => {
+      armed = null;
+      title.textContent = 'Tune car';
+    }, 2500);
+  });
+  const closeButton = iconButton('close', 'Close', () => setOpen(false));
+  const head = el('div', 'vc-head');
+  const bar = el('div', 'pt-bar');
+  bar.append(advancedLabel, presetsButton, resetButton, closeButton);
+  head.append(title, bar);
+
+  // ---- Rail ----
+  const rail = el('div', 'pt-rail');
+  const railButtons = new Map();
+  for (const s of SECTIONS) {
+    const b = el('button');
+    b.type = 'button';
+    b.title = s.label;
+    const badge = el('span', 'pt-badge');
+    b.append(icon(s.icon, 22), el('span', 'lbl', s.label), badge);
     b.addEventListener('click', () => {
-      applyValues(preset.values);
-      say(`Applied the ${preset.name} setup.`);
+      sectionId = s.id;
+      pager.setPage(0);
+      renderAll();
     });
-    chips.append(b);
-  }
-  const search = el('input', 'sm-search');
-  search.type = 'text';
-  search.placeholder = 'Search settings (grip, gears, aero...)';
-  const layoutBar = el('div', 'sm-layouts');
-  const layoutButtons = LAYOUTS.map(([key, name, hint]) => {
-    const b = button(name, hint);
-    b.addEventListener('click', () => setLayout(key));
-    layoutBar.append(b);
-    return b;
-  });
-  const closeButton = button('✕', 'Close (E)', 'sm-close');
-  head.append(el('h2', '', 'Car dashboard'), chips, search, layoutBar, closeButton);
-
-  // ---- Stats strip ----
-  const stats = el('div', 'sm-stats');
-  const statValues = {};
-  for (const [key, name] of [['pw', 'Power / weight'], ['drive', 'Drive'], ['grip', 'Tire grip'], ['down', 'Downforce']]) {
-    const box = el('div', 'sm-stat');
-    statValues[key] = el('b');
-    box.append(el('small', '', name), statValues[key]);
-    stats.append(box);
-  }
-  function refreshStats() {
-    const bias = getParam('drivetrain.frontBias');
-    statValues.pw.textContent = `${Math.round((getParam('engine.power') / getParam('chassis.mass')) * 1000)} kW/t`;
-    statValues.drive.textContent = bias === 0 ? 'Rear-wheel' : bias === 100 ? 'Front-wheel' : bias === 50 ? 'All-wheel' : `${bias}% front`;
-    statValues.grip.textContent = `μ ${formatValue(getParam('tire.friction'))}`;
-    statValues.down.textContent = `${formatValue(getParam('aero.downforce'))} m²`;
+    rail.append(b);
+    railButtons.set(s.id, { b, badge });
   }
 
-  // ---- Sections: Essentials (the basic settings) first, then one per group ----
-  const sections = new Map([[ESSENTIALS, []]]);
-  for (const def of PARAMS) {
-    if (def.basic) sections.get(ESSENTIALS).push(def);
+  // ---- Rows ----
+  const rowsBox = el('div', 'pt-rows');
+  const pager = createPager(() => renderRows());
+  const content = el('div', 'pt-content');
+  content.append(rowsBox, pager.node);
+  const main = el('div', 'pt-main');
+  main.append(rail, content);
+  const body = el('div', 'vc-body');
+  body.append(main);
+  panel.append(head, body);
+  onSwipe(rowsBox, () => pager.setPage(pager.page - 1, true), () => pager.setPage(pager.page + 1, true));
+
+  const rows = new Map(); // id -> { node, refresh }
+  const fmt = (def, v) => String(Number(v.toFixed(4)));
+
+  function paramRow(def) {
+    const node = el('div', 'pt-row');
+    node.title = def.description;
+    const name = el('div', 'pt-name', def.label);
+    const num = el('input', 'pt-num');
+    num.type = 'number';
+    num.inputMode = 'decimal';
+    num.min = String(def.min);
+    num.max = String(def.max);
+    num.step = String(def.step);
+    num.setAttribute('aria-label', def.label);
+    const reset = iconButton('reset', 'Reset to stock', () => resetParam(def.id), 'pt-reset');
+    const top = el('div', 'pt-top');
+    top.append(name, num, el('span', 'pt-unit', def.unit), reset);
+    const nudge = (d) => setParam(def.id, Number((getParam(def.id) + d * def.step).toFixed(6)));
+    const range = rangeInput({ min: def.min, max: def.max, step: def.step, value: getParam(def.id), onInput: (v) => setParam(def.id, v) });
+    const track = el('div', 'pt-track');
+    track.append(iconButton('minus', 'Decrease', () => nudge(-1)), range.input, iconButton('plus', 'Increase', () => nudge(1)));
+    node.append(top, track);
+    num.addEventListener('change', () => {
+      setParam(def.id, num.value);
+      refresh(true);
+    });
+    function refresh(force = false) {
+      const v = getParam(def.id);
+      range.set(v);
+      if (force || document.activeElement !== num) num.value = fmt(def, v);
+      node.classList.toggle('changed', v !== def.default);
+    }
+    refresh(true);
+    return { node, refresh };
+  }
+
+  // The drive share: layout chips, and the exact share only for a custom layout.
+  const driveDef = byId.get('drivetrain.frontBias');
+  const driveShare = paramRow(driveDef);
+  driveShare.node.classList.add('pt-dep');
+  const driveNode = el('div', 'pt-row');
+  driveNode.title = 'Which wheels the engine drives.';
+  const driveSeg = segmented([...DRIVE_LAYOUTS.map(([id, label]) => [id, label]), ['custom', 'Custom']], 'rwd', (id) => {
+    if (id === 'custom') customDrive = true;
     else {
-      if (!sections.has(def.group)) sections.set(def.group, []);
-      sections.get(def.group).push(def);
+      customDrive = false;
+      setParam(driveDef.id, DRIVE_LAYOUTS.find((d) => d[0] === id)[2]);
     }
+    renderAll();
+  });
+  const driveTop = el('div', 'pt-top');
+  driveTop.append(el('div', 'pt-name', 'Drive layout'));
+  driveNode.append(driveTop, driveSeg.node);
+  function refreshDrive() {
+    const v = getParam(driveDef.id);
+    const preset = DRIVE_LAYOUTS.find((d) => d[2] === v);
+    if (!preset) customDrive = true;
+    driveSeg.set(customDrive || !preset ? 'custom' : preset[0]);
+    driveNode.classList.toggle('changed', v !== driveDef.default);
+    driveShare.refresh();
   }
-  const body = el('div', 'sm-body');
-  const nav = el('div', 'sm-nav');
-  const cardBox = el('div', 'sm-cards');
-  const empty = el('div', 'sm-empty', 'No settings match your search.');
-  empty.hidden = true;
-  for (const [key, defs] of sections) {
-    const card = el('section', `sm-card${key === ESSENTIALS ? ' big' : ''}`);
-    card.style.setProperty('--ac', ACCENTS[key] ?? '#8fb8e8');
-    const cardHead = el('div', 'sm-card-head');
-    const resetGroup = button('Reset section', `Put every ${key.toLowerCase()} setting back to stock`);
-    cardHead.append(el('h3', '', key), resetGroup);
-    const rowBox = el('div', 'sm-rows');
-    const items = defs.map((def) => ({ def, row: createRow(def) }));
-    items.forEach((i) => rowBox.append(i.row));
-    card.append(cardHead, rowBox);
-    const navButton = button(key);
-    navButton.style.setProperty('--ac', ACCENTS[key] ?? '#8fb8e8');
-    const badge = el('span', 'sm-badge');
-    navButton.append(badge);
-    const entry = { key, card, items, navButton, badge };
-    cards.push(entry);
-    resetGroup.addEventListener('click', () => defs.forEach((d) => resetParam(d.id)));
-    navButton.addEventListener('click', () => {
-      activeKey = key;
-      applyView();
-    });
-    cardHead.addEventListener('click', (e) => {
-      if (layout !== 'c' || key === ESSENTIALS || e.target.closest('button')) return;
-      if (unfolded.has(key)) unfolded.delete(key);
-      else unfolded.add(key);
-      applyView();
-    });
-    nav.append(navButton);
-    cardBox.append(card);
-  }
-  cardBox.append(empty);
-  body.append(nav, cardBox);
+  rows.set('drive.layout', { node: driveNode, refresh: refreshDrive });
+  rows.set(driveDef.id, { node: driveShare.node, refresh: refreshDrive });
+  for (const def of PARAMS) if (def.id !== driveDef.id) rows.set(def.id, paramRow(def));
 
-  function refreshBadges() {
-    for (const c of cards) {
-      const n = c.items.filter((i) => getParam(i.def.id) !== i.def.default).length;
-      c.badge.textContent = n ? String(n) : '';
+  // Rows of a section that should show now.
+  function sectionRows(section) {
+    const list = [];
+    for (const id of section.ids) {
+      if (id === driveDef.id) {
+        list.push(rows.get('drive.layout').node);
+        if (customDrive) list.push(driveShare.node);
+      } else list.push(rows.get(id).node);
     }
+    return list;
   }
 
-  // Shows the right sections for the layout and the search text.
-  function applyView() {
-    const q = search.value.trim().toLowerCase();
-    let anyVisible = false;
-    for (const c of cards) {
-      let visible = 0;
-      for (const { def, row } of c.items) {
-        const hit = !q || `${def.label} ${def.description} ${def.group} ${def.id}`.toLowerCase().includes(q);
-        row.hidden = !hit;
-        if (hit) visible++;
+  const activeSections = () => SECTIONS.filter((s) => advanced || !s.advanced);
+
+  function renderRows() {
+    const section = SECTIONS.find((s) => s.id === sectionId);
+    const list = sectionRows(section);
+    const w = rowsBox.clientWidth || 700;
+    const h = rowsBox.clientHeight || ROW_HEIGHT * 4;
+    const { columns, perPage, pages } = computePaging(w, h, ROW_HEIGHT, list.length);
+    pager.setPages(pages);
+    const start = pager.page * perPage;
+    rowsBox.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+    rowsBox.replaceChildren(...list.slice(start, start + perPage));
+  }
+
+  function renderRail() {
+    const visible = activeSections();
+    rail.hidden = visible.length <= 1;
+    for (const s of SECTIONS) {
+      const { b, badge } = railButtons.get(s.id);
+      b.hidden = !visible.includes(s);
+      b.classList.toggle('on', s.id === sectionId);
+      const changed = s.ids.filter((id) => getParam(id) !== byId.get(id).default).length;
+      badge.textContent = changed ? String(changed) : '';
+    }
+  }
+
+  function renderAll() {
+    refreshDrive();
+    for (const r of rows.values()) r.refresh();
+    renderRail();
+    renderRows();
+  }
+
+  subscribe(() => {
+    for (const r of rows.values()) r.refresh();
+    refreshDrive();
+    renderRail();
+  });
+
+  // ---- Presets sheet ----
+  let sheet = null;
+  function openSheet() {
+    sheet?.remove();
+    const names = () => (store ? listPresets(store) : []);
+    sheet = el('div', 'pt-sheet');
+    const sheetHead = el('div', 'vc-head');
+    sheetHead.append(el('h2', '', 'Presets'), iconButton('close', 'Back', () => closeSheet()));
+    const list = el('div', 'pt-list');
+    const sheetPager = createPager(() => fill());
+    const input = el('input');
+    input.type = 'text';
+    input.placeholder = 'Name for this setup';
+    input.maxLength = 40;
+    const save = actionButton('Save', 'check', () => {
+      const name = cleanName(input.value);
+      if (!name || !store) return;
+      if (savePreset(store, name, snapshotValues())) {
+        input.value = '';
+        fill();
       }
-      const wanted = q ? visible > 0 : layout === 'a' ? c.key === activeKey : true;
-      c.card.hidden = !wanted;
-      c.card.classList.toggle('collapsed', layout === 'c' && !q && c.key !== ESSENTIALS && !unfolded.has(c.key));
-      c.navButton.classList.toggle('on', c.key === activeKey);
-      if (wanted) anyVisible = true;
+    }, 'primary');
+    const saveBar = el('div', 'pt-save');
+    saveBar.append(input, save);
+    sheet.append(sheetHead, list, sheetPager.node, saveBar);
+    body.append(sheet);
+
+    function fill() {
+      const entries = [
+        ...BUILTIN_PRESETS.map((p) => ({ name: p.name, apply: () => applyValues(p.values), builtin: true })),
+        ...names().map((n) => ({ name: n, apply: () => applyValues(readPreset(store, n) ?? {}), builtin: false })),
+      ];
+      const h = list.clientHeight || SHEET_ROW * 5;
+      const { columns, perPage, pages } = computePaging(list.clientWidth || 700, h, SHEET_ROW, entries.length);
+      sheetPager.setPages(pages);
+      list.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+      list.replaceChildren(
+        ...entries.slice(sheetPager.page * perPage, sheetPager.page * perPage + perPage).map((e) => {
+          const row = el('div', 'pt-entry');
+          const b = actionButton(e.name, e.builtin ? 'tune' : 'car', () => {
+            e.apply();
+            closeSheet();
+          });
+          row.append(b);
+          if (!e.builtin) {
+            row.append(iconButton('close', `Delete ${e.name}`, () => {
+              deletePreset(store, e.name);
+              fill();
+            }));
+          }
+          return row;
+        })
+      );
     }
-    nav.style.visibility = q ? 'hidden' : '';
-    empty.hidden = anyVisible;
+    fill();
   }
-
-  function setLayout(key) {
-    layout = key;
-    modal.dataset.layout = key;
-    layoutButtons.forEach((b, i) => b.classList.toggle('on', LAYOUTS[i][0] === key));
-    try {
-      store?.setItem(LAYOUT_KEY, key);
-    } catch {
-      /* not saved, still works */
-    }
-    applyView();
+  function closeSheet() {
+    sheet?.remove();
+    sheet = null;
   }
-  search.addEventListener('input', applyView);
-
-  // ---- Footer: presets ----
-  const nameInput = el('input');
-  nameInput.type = 'text';
-  nameInput.placeholder = 'Preset name';
-  nameInput.maxLength = 40;
-  const saveButton = button('Save');
-  const presetSelect = el('select');
-  const loadButton = button('Load');
-  const deleteButton = button('Delete');
-  const resetAllButton = button('Reset all to stock');
-  const foot = el('div', 'sm-foot');
-  foot.append(nameInput, saveButton, presetSelect, loadButton, deleteButton, resetAllButton, status);
-
-  function refreshPresetList(selectName) {
-    const names = store ? listPresets(store) : [];
-    if (names.length === 0) {
-      presetSelect.replaceChildren(new Option('No saved presets', ''));
-    } else {
-      presetSelect.replaceChildren(...names.map((n) => new Option(n, n)));
-      if (selectName && names.includes(selectName)) presetSelect.value = selectName;
-    }
-    loadButton.disabled = names.length === 0;
-    deleteButton.disabled = names.length === 0;
-  }
-
-  resetAllButton.addEventListener('click', () => {
-    resetAll();
-    say('Everything is back to stock.');
-  });
-  saveButton.addEventListener('click', () => {
-    const name = cleanName(nameInput.value);
-    if (!store) return say('Saving is not available in this browser.');
-    if (!name) return say('Type a name first.');
-    if (savePreset(store, name, snapshotValues())) {
-      say(`Saved "${name}".`);
-      refreshPresetList(name);
-    } else {
-      say('Could not save (storage is full or blocked).');
-    }
-  });
-  loadButton.addEventListener('click', () => {
-    const name = presetSelect.value;
-    const values = store && name ? readPreset(store, name) : null;
-    if (!values) return say('Nothing to load.');
-    applyValues(values);
-    say(`Loaded "${name}".`);
-  });
-  deleteButton.addEventListener('click', () => {
-    const name = presetSelect.value;
-    if (store && name && deletePreset(store, name)) {
-      say(`Deleted "${name}".`);
-      refreshPresetList();
-    } else {
-      say('Nothing to delete.');
-    }
-  });
-
-  modal.append(head, stats, body, foot);
-  document.body.appendChild(backdrop);
-  PARAMS.forEach((p) => refresh(p.id, true));
-  refreshStats();
-  refreshBadges();
-  refreshPresetList();
-  setLayout(layout);
-  subscribe((ids) => {
-    ids.forEach((id) => refresh(id));
-    refreshStats();
-    refreshBadges();
-  });
 
   function setOpen(next) {
     if (next === open) return;
     open = next;
-    backdrop.hidden = !open;
-    // Hand the keyboard back to the game.
-    if (!open && backdrop.contains(document.activeElement)) document.activeElement.blur();
+    root.hidden = !open;
+    if (open) renderAll();
+    else {
+      closeSheet();
+      if (root.contains(document.activeElement)) document.activeElement.blur();
+    }
   }
 
   closeButton.addEventListener('click', () => setOpen(false));
-  backdrop.addEventListener('mousedown', (e) => {
-    if (e.target === backdrop) setOpen(false);
+  root.addEventListener('pointerdown', (e) => {
+    if (e.target === root) setOpen(false);
   });
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'Escape' && open) setOpen(false);
+    if (e.code === 'Escape' && open) {
+      if (sheet) closeSheet();
+      else setOpen(false);
+    }
   });
+  window.addEventListener('resize', () => open && renderRows());
+  document.body.appendChild(root);
 
   return {
     get isOpen() {

@@ -21,6 +21,9 @@ import { recordRace, loadSettings } from './profile/profiles.js';
 import { subscribe } from './config/registry.js';
 import { createEffects } from './effects/effects.js';
 import { createSettingsMenu } from './ui/settingsMenu.js';
+import { createGameSettings, pixelRatioFor, fovFor } from './config/gameSettings.js';
+import { createGameSettingsMenu } from './ui/gameSettingsMenu.js';
+import { createTouchEditor } from './ui/touchEditor.js';
 import { createTouchControls } from './ui/touchControls.js';
 import { PERSONALITIES } from './ai/personalities.js';
 import { createMainMenu } from './ui/mainMenu.js';
@@ -31,8 +34,6 @@ import { FreeLook } from './camera/freeLook.js';
 
 const SKY_COLOR = 0x9cc3e6;
 const FIRST_PERSON_FOV = 72;
-const CHASE_FOV = 62;
-const SPEED_FOV_BOOST = 10; // extra degrees of field of view at full speed
 const FULL_SPEED = 60; // m/s at which the boost is complete
 const CHASE_DISTANCE = 8;
 const CHASE_HEIGHT = 3;
@@ -67,8 +68,11 @@ function getStorage() {
   }
 }
 
+// Sound, picture, effects, interface and touch settings (the car tuning lives in config/registry.js).
+const gameSettings = createGameSettings(getStorage(), { touch: window.matchMedia?.('(pointer: coarse)').matches ?? false });
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(pixelRatioFor(gameSettings.get('video.quality'), window.devicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -83,7 +87,7 @@ const look = new FreeLook();
   let lastY = 0;
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !isRacing() || settingsMenu.isOpen || paused) return;
+    if (e.button !== 0 || !isRacing() || overlayOpen() || paused) return;
     look.start();
     lastX = e.clientX;
     lastY = e.clientY;
@@ -135,20 +139,52 @@ const effects = createEffects(scene, worldView);
 const input = new Input();
 const stepper = new FixedStepper(1 / 120, 8);
 const controls = { forward: false, back: false, left: false, right: false, handbrake: false };
-const settingsMenu = createSettingsMenu();
+const settingsMenu = createSettingsMenu({ getStorage });
+const touchEditor = createTouchEditor({ settings: gameSettings });
+const gameMenu = createGameSettingsMenu({ settings: gameSettings, onEditLayout: () => touchEditor.open() });
+// True while any settings screen is on top of the game: input goes to it, not to the car.
+const overlayOpen = () => settingsMenu.isOpen || gameMenu.isOpen || touchEditor.isOpen;
 const cycleCamera = () => {
   cameraMode = CAMERA_MODES[(CAMERA_MODES.indexOf(cameraMode) + 1) % CAMERA_MODES.length];
 };
 const touch = createTouchControls({
-  onPause: () => isRacing() && !settingsMenu.isOpen && setPaused(!paused),
-  onSettings: () => isRacing() && !paused && settingsMenu.toggle(),
-  onCamera: () => isRacing() && !paused && !settingsMenu.isOpen && cycleCamera(),
+  settings: gameSettings,
+  onPause: () => isRacing() && !overlayOpen() && setPaused(!paused),
+  onSettings: () => {
+    if (!isRacing() || overlayOpen()) return;
+    setPaused(true); // the race waits while settings are open
+    gameMenu.open();
+  },
+  onCamera: () => isRacing() && !paused && !overlayOpen() && cycleCamera(),
 });
 const raceUi = createRaceUi();
 const audio = createAudio();
 // Browsers only allow sound after a click or key press.
 for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, () => audio.start(), { once: true });
+
 const hudPanel = createHud(track);
+
+// Frame rate readout (Settings, Video).
+const fpsCounter = document.createElement('div');
+fpsCounter.id = 'fps';
+fpsCounter.style.cssText = 'position:fixed;left:50%;top:6px;transform:translateX(-50%);padding:2px 8px;border-radius:6px;background:rgba(0,0,0,.5);color:#9ef0b0;font:12px system-ui,sans-serif;z-index:7;pointer-events:none';
+fpsCounter.hidden = true;
+document.body.appendChild(fpsCounter);
+let fpsFrames = 0;
+let fpsTime = 0;
+
+// Applies the game settings now, and again whenever one changes.
+function applyGameSettings() {
+  const g = (id) => gameSettings.get(id);
+  audio.setVolumes({ master: g('audio.master') / 100, sfx: g('audio.sfxVolume') / 100, music: g('audio.musicVolume') / 100, sfxOn: g('audio.sfx'), musicOn: g('audio.music') });
+  const ratio = pixelRatioFor(g('video.quality'), window.devicePixelRatio);
+  if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
+  fpsCounter.hidden = !g('video.fps');
+  effects.setOptions({ skid: g('effects.skid'), smoke: g('effects.smoke'), smokeAmount: g('effects.smokeAmount') / 100, sparks: g('effects.sparks') });
+  hudPanel.setOptions({ minimap: g('hud.minimap'), speedo: g('hud.speedo'), units: g('hud.units') });
+}
+gameSettings.subscribe(applyGameSettings);
+applyGameSettings();
 const style = new StyleTracker();
 
 // ---- Entrants -------------------------------------------------------------------------
@@ -214,6 +250,23 @@ function respawn(e) {
 
 // ---- Menu and race flow ---------------------------------------------------------------
 
+// A simplified outline of a track for the menu's track preview. Built on demand and kept.
+const outlineCache = new Map();
+function outlineFor(id) {
+  if (!outlineCache.has(id)) {
+    let data = null;
+    try {
+      const { track } = prepareMap(mapById(id).build());
+      const stride = Math.max(1, Math.floor(track.points.length / 140));
+      data = { points: track.points.filter((_, i) => i % stride === 0).map((q) => [q.x, q.z]), length: track.length };
+    } catch {
+      /* no preview for this track */
+    }
+    outlineCache.set(id, data);
+  }
+  return outlineCache.get(id);
+}
+
 const mainMenu = createMainMenu({
   getStorage,
   skins: SKINS,
@@ -224,10 +277,11 @@ const mainMenu = createMainMenu({
     player.model.setSkin(skin);
     player.color = skin.color;
   },
-  onSoundChange: (id) => audio.setLevel(id),
   onStart: () => startRace(),
+  onTune: () => settingsMenu.open(),
+  onSettings: () => gameMenu.open(),
+  getOutline: outlineFor,
 });
-audio.setLevel(mainMenu.getState().sound);
 
 const player = createEntrant({
   name: 'Guest',
@@ -484,7 +538,7 @@ function finishRace() {
 }
 
 let paused = false;
-let settingsWasOpen = false; // lets Esc that closes the settings menu not also open the pause menu
+let overlayWasOpen = false; // lets Esc that closes a settings screen not also open the pause menu
 
 function setPaused(value) {
   paused = value;
@@ -492,7 +546,13 @@ function setPaused(value) {
     raceUi.hidePause();
     return;
   }
-  raceUi.showPause({ onResume: () => setPaused(false), onRestart: startRace, onMenu: backToMenu });
+  raceUi.showPause({
+    onResume: () => setPaused(false),
+    onRestart: startRace,
+    onMenu: backToMenu,
+    onSettings: () => gameMenu.open(),
+    onTune: () => settingsMenu.open(),
+  });
 }
 
 const isRacing = () => race !== null && (race.phase === 'countdown' || race.phase === 'racing');
@@ -517,15 +577,14 @@ function limitAngle(angle) {
 
 function beforeFrame(frameDt) {
   // Read per-frame input here, never inside fixedUpdate.
-  if (!isRacing() && settingsMenu.isOpen) settingsMenu.close();
   if (!isRacing() && paused) setPaused(false);
-  if (isRacing() && !settingsMenu.isOpen && !settingsWasOpen && input.wasPressed('Escape')) setPaused(!paused);
-  settingsWasOpen = settingsMenu.isOpen;
+  if (isRacing() && !overlayOpen() && !overlayWasOpen && input.wasPressed('Escape')) setPaused(!paused);
+  overlayWasOpen = overlayOpen();
   if (isRacing() && !paused && input.wasPressed('KeyE')) settingsMenu.toggle();
-  if (isRacing() && !paused && !settingsMenu.isOpen && input.wasPressed('KeyC')) {
+  if (isRacing() && !paused && !overlayOpen() && input.wasPressed('KeyC')) {
     cycleCamera();
   }
-  const driving = race !== null && race.phase === 'racing' && !settingsMenu.isOpen && !paused;
+  const driving = race !== null && race.phase === 'racing' && !overlayOpen() && !paused;
 
   // The car is released while the settings menu is open.
   controls.forward = driving && (input.isDown('KeyW') || input.isDown('ArrowUp'));
@@ -645,6 +704,13 @@ function placeAwayFromGround(x, y, z, me) {
 function render(alpha) {
   const now = performance.now();
   const frameDt = Math.min((now - lastRender) / 1000, 0.1);
+  fpsFrames++;
+  fpsTime += frameDt;
+  if (fpsTime >= 0.5) {
+    if (!fpsCounter.hidden) fpsCounter.textContent = `${Math.round(fpsFrames / fpsTime)} fps`;
+    fpsFrames = 0;
+    fpsTime = 0;
+  }
   lastRender = now;
 
   let me = null;
@@ -664,10 +730,10 @@ function render(alpha) {
 
   // Speed widens the field of view; the change is smoothed so it never pops.
   const speedFactor = Math.min(1, Math.abs(player.car.u) / FULL_SPEED);
+  const baseFov = gameSettings.get('video.fov');
+  const boost = gameSettings.get('video.speedFov') ? gameSettings.get('video.speedFovAmount') : 0;
   const targetFov =
-    view === 'first'
-      ? FIRST_PERSON_FOV + SPEED_FOV_BOOST * speedFactor
-      : CHASE_FOV + (view === 'orbit' ? 0 : SPEED_FOV_BOOST * speedFactor);
+    view === 'first' ? fovFor('first', baseFov) + boost * speedFactor : fovFor('chase', baseFov) + (view === 'orbit' ? 0 : boost * speedFactor);
   const nextFov = camera.fov + (targetFov - camera.fov) * (1 - Math.exp(-frameDt * 6));
   if (Math.abs(nextFov - camera.fov) > 0.005) {
     camera.fov = nextFov;
@@ -742,11 +808,11 @@ function render(alpha) {
   effects.update(frameDt, entrants, camera, renderer.domElement.height);
   renderer.render(scene, camera);
 
-  hud.hidden = !racing;
+  hud.hidden = !racing || !gameSettings.get('hud.hints');
   if (racing) hud.textContent = touch.enabled
       ? touch.hint
-      : 'W/S gas/brake · A/D steer · Space handbrake · drag mouse to look · C camera · E settings';
-  touch.setVisible(racing && !paused && !settingsMenu.isOpen);
+      : 'W/S gas/brake | A/D steer | Space handbrake | drag mouse to look | C camera | E tune car | Esc pause';
+  touch.setVisible(racing && !paused && !overlayOpen());
 
   hudPanel.setVisible(racing);
   if (racing) {
@@ -757,7 +823,7 @@ function render(alpha) {
       redline: readCarSpec().redline,
       driftText:
         style.driftPoints > 0
-          ? `DRIFT ${Math.round(style.driftPoints)} ×${style.multiplier}`
+          ? `DRIFT ${Math.round(style.driftPoints)} x${style.multiplier}`
           : style.popup > 0
             ? style.popupText
             : '',
