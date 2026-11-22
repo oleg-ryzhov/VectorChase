@@ -24,6 +24,7 @@ import { createSettingsMenu } from './ui/settingsMenu.js';
 import { createGameSettings, pixelRatioFor, fovFor } from './config/gameSettings.js';
 import { createGameSettingsMenu } from './ui/gameSettingsMenu.js';
 import { createTouchEditor } from './ui/touchEditor.js';
+import { createFullscreenGate } from './ui/fullscreen.js';
 import { createTouchControls } from './ui/touchControls.js';
 import { PERSONALITIES } from './ai/personalities.js';
 import { createMainMenu } from './ui/mainMenu.js';
@@ -144,6 +145,11 @@ const touchEditor = createTouchEditor({ settings: gameSettings });
 const gameMenu = createGameSettingsMenu({ settings: gameSettings, onEditLayout: () => touchEditor.open() });
 // True while any settings screen is on top of the game: input goes to it, not to the car.
 const overlayOpen = () => settingsMenu.isOpen || gameMenu.isOpen || touchEditor.isOpen;
+// On a phone or tablet the game is only played full screen: if it ends mid-race, the race pauses.
+const fullscreenGate = createFullscreenGate({
+  touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  onLost: () => isRacing() && setPaused(true),
+});
 const cycleCamera = () => {
   cameraMode = CAMERA_MODES[(CAMERA_MODES.indexOf(cameraMode) + 1) % CAMERA_MODES.length];
 };

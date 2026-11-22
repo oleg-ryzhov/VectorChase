@@ -36,6 +36,8 @@ export const ICONS = {
   chassis: ['M3 16h18', 'M5 16v-4l3-4h8l3 4v4', 'M7 19.5v-3.5M17 19.5v-3.5'],
   aero: ['M3 9c6-3 12-3 18 0', 'M3 14c6-3 12-3 18 0', 'M6 19l3-2M15 19l3-2'],
   brakes: ['M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16z', 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z', 'M12 4v2M12 18v2M4 12h2M18 12h2'],
+  expand: ['M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'],
+  shrink: ['M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5'],
   suspension: ['M9 4h6M9 20h6', 'M9 7l6 2.5-6 2.5 6 2.5-6 2.5'],
 };
 

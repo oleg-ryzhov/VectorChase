@@ -1,5 +1,6 @@
 import { el, button, addStyle } from './dom.js';
 import { ensureTheme, actionButton } from './widgets.js';
+import { toggleFullscreen, fullscreenSupported } from './fullscreen.js';
 import { formatTime } from '../race/race.js';
 
 const STYLE = `
@@ -87,6 +88,7 @@ export function createRaceUi() {
         actionButton('Tune car', 'tune', onTune),
         actionButton('Main menu', 'flag', onMenu)
       );
+      if (fullscreenSupported()) grid.append(actionButton('Full screen', 'expand', () => toggleFullscreen(), 'wide'));
       pause.append(el('h2', '', 'Paused'), grid);
       pause.hidden = false;
     },

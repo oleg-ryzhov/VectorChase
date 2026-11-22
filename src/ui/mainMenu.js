@@ -9,6 +9,7 @@ import { formatTime } from '../race/race.js';
 import { loadGhost, deleteGhost } from '../race/ghost.js';
 import { ensureTheme, iconButton, actionButton, segmented, switchControl, createPager, onSwipe } from './widgets.js';
 import { computePaging } from './settingsMenu.js';
+import { toggleFullscreen, isFullscreen, fullscreenSupported, onFullscreenChange } from './fullscreen.js';
 
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 const NS = 'http://www.w3.org/2000/svg';
@@ -64,16 +65,28 @@ const STYLE = `
 .mm-brow{display:grid;grid-template-columns:30px 1fr 56px 44px 80px;gap:6px;align-items:center;height:44px;border-bottom:1px solid #1b2540;font-variant-numeric:tabular-nums}
 .mm-brow.head{color:var(--vc-mute);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .mm-brow.me{color:var(--vc-warn)}
-@media (max-height:430px) and (min-width:560px){
+.mm-dup{display:none}
+.mm-stepper{display:none;align-items:center;gap:6px}
+.mm-stepper .name{flex:1;min-width:0;text-align:center;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mm-stepper .dot{width:26px;height:26px;border-radius:50%;border:2px solid #fff;flex:none}
+.mm-stepper .vc-iconbtn{width:36px;height:36px}
+/* A phone held sideways: three columns (play, track, setup) so everything fits without scrolling. */
+@media (orientation:landscape) and (max-height:480px){
+ .mm-shell{padding-top:max(6px,env(safe-area-inset-top));padding-bottom:max(6px,env(safe-area-inset-bottom))}
  .mm-logo{font-size:20px}.mm-top{min-height:40px}.mm-chip,.mm-top .vc-iconbtn{min-height:40px}
  .mm-grid{grid-template-columns:1fr 1.2fr 1.1fr;gap:12px;padding-top:4px}
  .mm-race{min-height:64px;font-size:22px}.mm-tile{min-height:52px;flex-direction:row;gap:8px}.mm-tiles{grid-template-columns:1fr}
- .mm-card{padding:8px;gap:4px}.mm-preview{height:clamp(70px,32vh,120px)}.mm-mapname{font-size:18px}.mm-blurb,.mm-hint{display:none}
- .mm-line .vc-seg button{min-height:32px}.mm-line .vc-seg{padding:3px}.mm-swatch{width:28px;height:28px}.mm-paint{gap:6px}.mm-setup{gap:5px}
+ .mm-card{padding:8px;gap:4px}.mm-preview{height:clamp(56px,28vh,120px)}.mm-mapname{font-size:18px}.mm-blurb,.mm-hint{display:none}
+ .mm-line{gap:2px}.mm-line>.lbl{font-size:10px;line-height:1.1}
+ .mm-line .vc-seg{padding:3px;gap:3px}.mm-line .vc-seg button{min-height:clamp(24px,8vh,32px);font-size:13px}
+ .mm-ghost{min-height:36px}.mm-setup{gap:4px}
+ .mm-paint{display:none}.mm-stepper{display:flex}
 }
-@media (max-width:759px){
+/* A phone held upright: Track and Setup tabs, RACE at the bottom. */
+@media (orientation:portrait) and (max-width:759px){
  .mm-grid{display:flex;flex-direction:column;gap:10px}
  .mm-left{display:none}
+ .mm-dup{display:inline-flex}
  .mm-group{display:none;flex:1}
  .mm-group.active{display:flex}
  .mm-preview{height:clamp(90px,30vh,200px)}
@@ -109,10 +122,14 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   logo.append('VECTOR', el('span', '', 'CHASE'));
   const playerChip = el('button', 'mm-chip');
   playerChip.type = 'button';
-  const settingsButton = iconButton('gear', 'Settings', () => onSettings());
-  const tuneButton = iconButton('tune', 'Tune car', () => onTune());
+  const settingsButton = iconButton('gear', 'Settings', () => onSettings(), 'mm-dup');
+  const tuneButton = iconButton('tune', 'Tune car', () => onTune(), 'mm-dup');
+  const fullscreenButton = iconButton('expand', 'Full screen', () => toggleFullscreen());
+  fullscreenButton.hidden = !fullscreenSupported(); // some phones (iPhone) cannot do it in the browser
+  const syncFullscreen = () => fullscreenButton.replaceChildren(icon(isFullscreen() ? 'shrink' : 'expand', 24));
+  onFullscreenChange(syncFullscreen);
   const top = el('div', 'mm-top');
-  top.append(logo, playerChip, tuneButton, settingsButton);
+  top.append(logo, playerChip, tuneButton, settingsButton, fullscreenButton);
 
   // ---- Left column: race button and tiles ----
   const raceButton = actionButton('RACE', 'flag', () => onStart(), 'primary mm-race');
@@ -264,6 +281,16 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     swatches.append(sw);
   }
   swatches.append(skinName);
+  const stepDot = el('span', 'dot');
+  const stepName = el('span', 'name');
+  const stepSkin = (d) => {
+    const i = skins.findIndex((x) => x.id === skinId);
+    setSkin(skins[(i + d + skins.length) % skins.length].id);
+  };
+  const stepper = el('div', 'mm-stepper');
+  stepper.append(iconButton('left', 'Previous paint', () => stepSkin(-1)), stepDot, stepName, iconButton('right', 'Next paint', () => stepSkin(1)));
+  const paintBox = el('div');
+  paintBox.append(swatches, stepper);
   function setSkin(id) {
     skinId = id;
     if (user) {
@@ -278,11 +305,14 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   }
   function renderSkin() {
     for (const sw of swatches.querySelectorAll('.mm-swatch')) sw.classList.toggle('on', sw.dataset.id === skinId);
-    skinName.textContent = skins.find((s) => s.id === skinId).name;
+    const current = skins.find((s) => s.id === skinId);
+    skinName.textContent = current.name;
+    stepName.textContent = current.name;
+    stepDot.style.background = current.accent === undefined ? hex(current.color) : `linear-gradient(135deg, ${hex(current.color)} 62%, ${hex(current.accent)} 62%)`;
   }
 
   const setupCard = el('div', 'mm-card mm-setup');
-  setupCard.append(line('Laps', lapsSeg.node), line('Opponents', oppSeg.node), diffLine, ghostRow, line('Paint', swatches));
+  setupCard.append(line('Laps', lapsSeg.node), line('Opponents', oppSeg.node), diffLine, ghostRow, line('Paint', paintBox));
 
   const trackGroup = el('div', 'mm-col mm-group active');
   trackGroup.append(trackCard);
@@ -416,6 +446,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     renderSetup();
     sheet?.redraw?.();
   }
+  syncFullscreen();
   refreshAll();
 
   return {
