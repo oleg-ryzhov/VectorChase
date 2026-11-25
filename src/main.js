@@ -156,11 +156,7 @@ const cycleCamera = () => {
 const touch = createTouchControls({
   settings: gameSettings,
   onPause: () => isRacing() && !overlayOpen() && setPaused(!paused),
-  onSettings: () => {
-    if (!isRacing() || overlayOpen()) return;
-    setPaused(true); // the race waits while settings are open
-    gameMenu.open();
-  },
+  onTune: () => isRacing() && !paused && !gameMenu.isOpen && settingsMenu.toggle(),
   onCamera: () => isRacing() && !paused && !overlayOpen() && cycleCamera(),
 });
 const raceUi = createRaceUi();
@@ -168,7 +164,7 @@ const audio = createAudio();
 // Browsers only allow sound after a click or key press.
 for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, () => audio.start(), { once: true });
 
-const hudPanel = createHud(track);
+const hudPanel = createHud(track, { onTune: () => isRacing() && !paused && !gameMenu.isOpen && settingsMenu.toggle() });
 
 // Frame rate readout (Settings, Video).
 const fpsCounter = document.createElement('div');
@@ -285,7 +281,9 @@ const mainMenu = createMainMenu({
   },
   onStart: () => startRace(),
   onTune: () => settingsMenu.open(),
-  onSettings: () => gameMenu.open(),
+  onGarage: (open) => {
+    garageOpen = open;
+  },
   getOutline: outlineFor,
 });
 
@@ -570,6 +568,11 @@ let view = 'orbit'; // 'first', 'chase', 'rear' or 'orbit' (menu and results)
 let chaseYaw = player.car.yaw;
 let chaseY = player.car.y + CHASE_HEIGHT;
 let orbitAngle = 0;
+let garageOpen = false; // the Garage screen is open: the menu camera moves in close to show the paint
+const GARAGE_RADIUS = 5.4;
+const GARAGE_HEIGHT = 1.4;
+let orbitRadius = ORBIT_RADIUS;
+let orbitHeight = ORBIT_HEIGHT;
 let lastRender = performance.now();
 let lastView = null;
 let blend = 1; // 0..1 progress of the current view change
@@ -748,7 +751,9 @@ function render(alpha) {
 
   chaseYaw += (me.yaw - chaseYaw) * (1 - Math.exp(-frameDt * 4));
   chaseY += (me.y + CHASE_HEIGHT - chaseY) * (1 - Math.exp(-frameDt * 5));
-  orbitAngle += frameDt * 0.35;
+  orbitAngle += frameDt * (garageOpen ? 0.25 : 0.35);
+  orbitRadius += ((garageOpen ? GARAGE_RADIUS : ORBIT_RADIUS) - orbitRadius) * Math.min(1, frameDt * 4);
+  orbitHeight += ((garageOpen ? GARAGE_HEIGHT : ORBIT_HEIGHT) - orbitHeight) * Math.min(1, frameDt * 4);
 
   // Tunnels are dark, and the camera leans with a banked road.
   const lat = racing ? world.lateral(me.x, me.z, me.y) : null;
@@ -778,9 +783,9 @@ function render(alpha) {
       me.z - CHASE_LOOK_AHEAD * Math.sin(o.angle)
     );
   } else {
-    const camX = me.x + Math.cos(orbitAngle) * ORBIT_RADIUS;
-    const camZ = me.z + Math.sin(orbitAngle) * ORBIT_RADIUS;
-    placeAwayFromGround(camX, me.y + ORBIT_HEIGHT, camZ, me);
+    const camX = me.x + Math.cos(orbitAngle) * orbitRadius;
+    const camZ = me.z + Math.sin(orbitAngle) * orbitRadius;
+    placeAwayFromGround(camX, me.y + orbitHeight, camZ, me);
     camera.lookAt(me.x, me.y + 0.8, me.z);
   }
 

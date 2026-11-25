@@ -9,7 +9,7 @@ test('every control has a real icon and the schemes share the gas, brake and but
   for (const c of Object.values(CONTROLS)) assert.ok(ICONS[c.icon], c.icon);
   assert.deepEqual(controlsFor('pad').filter((i) => i === 'left' || i === 'right'), []);
   assert.ok(controlsFor('arrows').includes('left') && !controlsFor('arrows').includes('steer'));
-  for (const s of ['pad', 'arrows']) for (const id of ['gas', 'brake', 'handbrake', 'pause', 'settings', 'camera']) assert.ok(controlsFor(s).includes(id));
+  for (const s of ['pad', 'arrows']) for (const id of ['gas', 'brake', 'handbrake', 'pause', 'tune', 'camera']) assert.ok(controlsFor(s).includes(id));
 });
 
 test('the default layout fits every common screen and no two touch areas overlap', () => {

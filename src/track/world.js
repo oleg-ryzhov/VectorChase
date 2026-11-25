@@ -198,6 +198,7 @@ export function createWorld(track, baseHeight = () => 0, opts = {}) {
   }
 
   // ---- Obstacles (buildings, stands) ----
+  const CAR_HEADROOM = 2; // m: a car needs this much room under an archway
   const OB_CELL = 64;
   const obGrid = new Map();
   obstacles.forEach((o, i) => {
@@ -218,6 +219,7 @@ export function createWorld(track, baseHeight = () => 0, opts = {}) {
       for (const i of list) {
         const o = obstacles[i];
         if (o.top < y + 0.5) continue;
+        if (o.bottom !== undefined && y + CAR_HEADROOM <= o.bottom) continue; // an archway: the car passes underneath
         const px = Math.min(o.x1, Math.max(o.x0, x));
         const pz = Math.min(o.z1, Math.max(o.z0, z));
         const d = Math.hypot(x - px, z - pz);

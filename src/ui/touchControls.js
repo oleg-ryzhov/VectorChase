@@ -76,9 +76,9 @@ export function placeControl(th, tv, box, opacity) {
   tv.style.opacity = String(opacity);
 }
 
-// settings: from createGameSettings (optional). Callbacks: onPause, onSettings, onCamera.
+// settings: from createGameSettings (optional). Callbacks: onPause, onTune, onCamera.
 // Returns { state, enabled, setVisible, hint }.
-export function createTouchControls({ settings = null, onPause, onSettings, onCamera }) {
+export function createTouchControls({ settings = null, onPause, onTune, onCamera }) {
   const get = (id, fallback) => settings?.get(id) ?? fallback;
   const state = { forward: false, back: false, handbrake: false, steer: 0, steering: false };
   const held = { left: false, right: false };
@@ -169,7 +169,7 @@ export function createTouchControls({ settings = null, onPause, onSettings, onCa
       });
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) th.addEventListener(type, release);
     } else {
-      const action = { pause: onPause, settings: onSettings, camera: onCamera }[id];
+      const action = { pause: onPause, tune: onTune, camera: onCamera }[id];
       th.addEventListener('pointerdown', (e) => {
         buzz();
         action?.();

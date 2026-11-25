@@ -8,6 +8,7 @@ const THEME = `
 .vc-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,14,.74);color:var(--vc-text);font:15px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 .vc-screen[hidden],.vc-screen [hidden]{display:none!important}
 .vc-screen *{box-sizing:border-box}
+.vc-screen button:focus-visible,.vc-screen input:focus-visible{outline:2px solid var(--vc-blue);outline-offset:2px}
 .vc-screen input[type=text],.vc-screen input[type=number]{user-select:text;-webkit-user-select:text}
 .vc-panel{width:min(980px,100vw);height:min(620px,100vh);height:min(620px,100dvh);display:flex;flex-direction:column;background:var(--vc-panel);border:1px solid var(--vc-line);border-radius:16px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6)}
 @media (max-width:760px),(max-height:520px){.vc-panel{width:100vw;height:100vh;height:100dvh;border-radius:0;border:0}}

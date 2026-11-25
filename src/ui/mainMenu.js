@@ -66,6 +66,20 @@ const STYLE = `
 .mm-brow.head{color:var(--vc-mute);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .mm-brow.me{color:var(--vc-warn)}
 .mm-dup{display:none}
+.mm-garage{z-index:21;flex-direction:column;align-items:stretch;justify-content:space-between;background:linear-gradient(180deg,rgba(5,8,14,.6) 0,rgba(5,8,14,0) 24%,rgba(5,8,14,0) 56%,rgba(5,8,14,.88) 100%)}
+.mm-garage-top{display:flex;align-items:center;gap:10px;padding:max(8px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 0 max(14px,env(safe-area-inset-left))}
+.mm-garage-top h2{flex:1;margin:0;font-size:20px;letter-spacing:.12em}
+.mm-garage-mid{flex:1;min-height:0}
+.mm-garage-bar{display:flex;align-items:center;gap:8px;padding:6px max(14px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
+.mm-garage-bar .vc-iconbtn{width:56px;height:56px;background:rgba(17,24,38,.8);border-color:var(--vc-line)}
+.mm-garage-info{flex:1;min-width:0;text-align:center}
+.mm-garage-name{font-size:24px;font-weight:800;line-height:1.1}
+.mm-garage-count{color:var(--vc-mute);font-size:13px;margin-top:2px}
+.mm-traits{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px}
+.mm-trait{padding:3px 10px;border-radius:12px;background:rgba(77,163,255,.18);border:1px solid rgba(77,163,255,.5);font-size:12px;font-weight:600}
+.mm-garage-on{background:none!important}
+.mm-garage-on .mm-shell{visibility:hidden}
+@media (orientation:landscape) and (max-height:480px){.mm-garage-name{font-size:18px}.mm-garage-bar .vc-iconbtn{width:48px;height:48px}.mm-traits{margin-top:3px}}
 .mm-stepper{display:none;align-items:center;gap:6px}
 .mm-stepper .name{flex:1;min-width:0;text-align:center;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mm-stepper .dot{width:26px;height:26px;border-radius:50%;border:2px solid #fff;flex:none}
@@ -94,12 +108,13 @@ const STYLE = `
  .mm-nav .vc-seg{flex:1}
  .mm-race-narrow{display:inline-flex;flex:1;min-height:52px;font-size:20px;letter-spacing:.1em}
  .mm-logo{font-size:20px}
+ .mm-chip{padding:0 12px}.mm-chip span{display:none}
  .mm-brow{grid-template-columns:24px 1fr 46px 36px 66px;font-size:13px}
 }
 `;
 
 // getOutline(mapId) -> { points: [[x, z], ...], length } or null. Called after the menu is drawn.
-export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart, onTune = () => {}, onSettings = () => {}, getOutline = () => null }) {
+export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart, onTune = () => {}, onGarage = () => {}, getOutline = () => null }) {
   ensureTheme();
   addStyle(STYLE);
   const store = getStorage();
@@ -122,17 +137,26 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   logo.append('VECTOR', el('span', '', 'CHASE'));
   const playerChip = el('button', 'mm-chip');
   playerChip.type = 'button';
-  const settingsButton = iconButton('gear', 'Settings', () => onSettings(), 'mm-dup');
+  const garageButton = iconButton('car', 'Garage', () => openGarage(), 'mm-dup');
   const tuneButton = iconButton('tune', 'Tune car', () => onTune(), 'mm-dup');
   const fullscreenButton = iconButton('expand', 'Full screen', () => toggleFullscreen());
   fullscreenButton.hidden = !fullscreenSupported(); // some phones (iPhone) cannot do it in the browser
   const syncFullscreen = () => fullscreenButton.replaceChildren(icon(isFullscreen() ? 'shrink' : 'expand', 24));
   onFullscreenChange(syncFullscreen);
   const top = el('div', 'mm-top');
-  top.append(logo, playerChip, tuneButton, settingsButton, fullscreenButton);
+  top.append(logo, playerChip, garageButton, tuneButton, fullscreenButton);
 
   // ---- Left column: race button and tiles ----
-  const raceButton = actionButton('RACE', 'flag', () => onStart(), 'primary mm-race');
+  // A track picked a moment ago may not be loaded yet: load it before the race starts.
+  const start = () => {
+    if (changeTimer !== null) {
+      clearTimeout(changeTimer);
+      changeTimer = null;
+      onMapChange(settings.map);
+    }
+    onStart();
+  };
+  const raceButton = actionButton('RACE', 'flag', () => start(), 'primary mm-race');
   const tile = (iconName, label, fn) => {
     const b = el('button', 'mm-tile');
     b.type = 'button';
@@ -141,11 +165,12 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     return b;
   };
   const tiles = el('div', 'mm-tiles');
-  tiles.append(tile('tune', 'Tune car', () => onTune()), tile('gear', 'Settings', () => onSettings()), tile('trophy', 'Scores', () => openSheet('board')));
+  tiles.append(tile('tune', 'Tune car', () => onTune()), tile('car', 'Garage', () => openGarage()), tile('trophy', 'Scores', () => openSheet('board')));
   const left = el('div', 'mm-col mm-left');
-  left.append(raceButton, tiles, el('div', 'mm-hint', 'W S gas and brake, A D steer, Space handbrake, C camera, E tune car'));
+  left.append(raceButton, tiles, el('div', 'mm-hint', 'W S gas and brake, A D steer, Space handbrake, C camera, E tune car, Esc pause and settings'));
 
   // ---- Track carousel ----
+  let changeTimer = null;
   const preview = el('div', 'mm-preview');
   const prev = iconButton('left', 'Previous track', () => step(-1));
   const next = iconButton('right', 'Next track', () => step(1));
@@ -160,7 +185,6 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
   onSwipe(preview, () => step(-1), () => step(1));
 
   let outlineTimer = null;
-  let changeTimer = null;
   function drawOutline(data) {
     preview.replaceChildren();
     if (!data || data.points.length < 3) {
@@ -220,7 +244,10 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     renderMap();
     renderGhost();
     clearTimeout(changeTimer);
-    changeTimer = setTimeout(() => onMapChange(settings.map), 350); // wait until the player stops flicking through
+    changeTimer = setTimeout(() => {
+      changeTimer = null;
+      onMapChange(settings.map);
+    }, 350); // wait until the player stops flicking through
   }
 
   // ---- Setup ----
@@ -308,6 +335,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     const current = skins.find((s) => s.id === skinId);
     skinName.textContent = current.name;
     stepName.textContent = current.name;
+    if (!garage.hidden) renderGarage();
     stepDot.style.background = current.accent === undefined ? hex(current.color) : `linear-gradient(135deg, ${hex(current.color)} 62%, ${hex(current.accent)} 62%)`;
   }
 
@@ -326,12 +354,63 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     trackGroup.classList.toggle('active', v === 'track');
     setupGroup.classList.toggle('active', v === 'setup');
   });
-  const raceNarrow = actionButton('RACE', 'flag', () => onStart(), 'primary mm-race-narrow');
+  const raceNarrow = actionButton('RACE', 'flag', () => start(), 'primary mm-race-narrow');
   const nav = el('div', 'mm-nav');
   nav.append(tabs.node, raceNarrow);
 
   shell.append(top, grid, nav);
   document.body.appendChild(root);
+
+  // ---- Garage: the real car up close, so the paint (gloss, glow, pearl shift) can be judged ----
+  const traitsOf = (skin) => [
+    skin.clearcoat >= 0.5 ? 'Gloss' : 'Matte',
+    skin.metalness >= 0.7 ? 'Metallic' : null,
+    skin.glow !== undefined ? 'Neon glow' : null,
+    skin.iridescence ? 'Pearl shift' : null,
+    skin.accent !== undefined ? 'Stripes' : null,
+  ].filter(Boolean);
+  const garage = el('div', 'vc-screen mm-garage');
+  garage.id = 'garage';
+  garage.hidden = true;
+  const garageName = el('div', 'mm-garage-name');
+  const garageCount = el('div', 'mm-garage-count');
+  const garageTraits = el('div', 'mm-traits');
+  const garageInfo = el('div', 'mm-garage-info');
+  garageInfo.append(garageName, garageCount, garageTraits);
+  const garageTop = el('div', 'mm-garage-top');
+  garageTop.append(el('h2', '', 'GARAGE'), actionButton('Done', 'check', () => closeGarage(), 'primary small'));
+  const garageMid = el('div', 'mm-garage-mid');
+  const garageBar = el('div', 'mm-garage-bar');
+  garageBar.append(iconButton('left', 'Previous paint', () => stepSkin(-1)), garageInfo, iconButton('right', 'Next paint', () => stepSkin(1)));
+  garage.append(garageTop, garageMid, garageBar);
+  document.body.appendChild(garage);
+  onSwipe(garageMid, () => stepSkin(-1), () => stepSkin(1));
+  function renderGarage() {
+    const i = skins.findIndex((x) => x.id === skinId);
+    const skin = skins[i];
+    garageName.textContent = skin.name;
+    garageCount.textContent = `${i + 1} of ${skins.length}`;
+    garageTraits.replaceChildren(...traitsOf(skin).map((t) => el('span', 'mm-trait', t)));
+  }
+  function openGarage() {
+    closeSheet();
+    garage.hidden = false;
+    root.classList.add('mm-garage-on');
+    renderGarage();
+    onGarage(true);
+  }
+  function closeGarage() {
+    if (garage.hidden) return;
+    garage.hidden = true;
+    root.classList.remove('mm-garage-on');
+    onGarage(false);
+  }
+  window.addEventListener('keydown', (e) => {
+    if (garage.hidden) return;
+    if (e.code === 'ArrowLeft') stepSkin(-1);
+    else if (e.code === 'ArrowRight') stepSkin(1);
+    else if (e.code === 'Escape' || e.code === 'Enter') closeGarage();
+  });
 
   // ---- Player sheet: profile and scores ----
   let sheet = null;
@@ -460,6 +539,7 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
     hide() {
       root.hidden = true;
       closeSheet();
+      closeGarage();
     },
     refresh: refreshAll,
     getState() {

@@ -12,7 +12,7 @@ export const CONTROLS = {
   brake: { label: 'Brake', icon: 'brake', w: 16, h: 24, scheme: 'both', x: 0.74, y: 0.85 },
   handbrake: { label: 'Handbrake', icon: 'handbrake', w: 16, h: 12, scheme: 'both', x: 0.74, y: 0.62 },
   pause: { label: 'Pause', icon: 'pause', w: 11, h: 11, scheme: 'both', x: 0.05, y: 0.11 },
-  settings: { label: 'Settings', icon: 'gear', w: 11, h: 11, scheme: 'both', x: 0.15, y: 0.11 },
+  tune: { label: 'Tune car', icon: 'tune', w: 11, h: 11, scheme: 'both', x: 0.15, y: 0.11 },
   camera: { label: 'Camera', icon: 'camera', w: 11, h: 11, scheme: 'both', x: 0.25, y: 0.11 },
 };
 

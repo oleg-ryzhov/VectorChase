@@ -1,8 +1,11 @@
 import { el, addStyle } from './dom.js';
+import { icon } from './icons.js';
 import { subscribe } from '../config/registry.js';
 import { listChanges, formatValue } from '../config/changes.js';
 
 const STYLE = `
+#dash .dash-tune{position:absolute;top:6px;left:8px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;cursor:pointer;pointer-events:auto}
+#dash .dash-tune:hover{background:rgba(255,255,255,.28)}
 #dash{position:fixed;right:16px;bottom:16px;width:170px;padding:10px 14px;box-sizing:border-box;background:rgba(0,0,0,.5);border-radius:10px;color:#fff;font-family:system-ui,sans-serif;z-index:5;pointer-events:none}
 #dash[hidden]{display:none}
 .dash-speed{font-size:44px;font-weight:700;line-height:1;text-align:right;font-variant-numeric:tabular-nums}
@@ -24,7 +27,8 @@ const MAP_PADDING = 12;
 const cssColor = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
 // Speed, gear and rpm, a track minimap, and a list of settings that differ from the defaults.
-export function createHud(track) {
+// onTune(): called when the tuner button on the dashboard is pressed.
+export function createHud(track, { onTune = () => {} } = {}) {
   addStyle(STYLE);
 
   const dash = el('div');
@@ -36,7 +40,13 @@ export function createHud(track) {
   const rpmFill = el('div', 'dash-rpm-fill');
   rpmBar.append(rpmFill);
   const unitLabel = el('div', 'dash-unit', 'km/h');
-  dash.append(gear, speed, unitLabel, rpmBar);
+  const tuneButton = el('button', 'dash-tune');
+  tuneButton.type = 'button';
+  tuneButton.title = 'Tune car (E)';
+  tuneButton.setAttribute('aria-label', 'Tune car');
+  tuneButton.append(icon('tune', 20));
+  tuneButton.addEventListener('click', () => onTune());
+  dash.append(tuneButton, gear, speed, unitLabel, rpmBar);
   const drift = el('div');
   drift.id = 'drift';
 

@@ -31,12 +31,20 @@ See `docs/DESIGN.md`.
 - W / S: accelerate / brake (hold S when stopped to reverse)
 - A / D: steer
 - C: cycle the camera: first-person, chase, rear (the chase view turned around)
-- Esc: pause (resume, restart the race or go to the main menu)
-- E: open or close the car settings during a race (time slows down while it is open)
+- Esc: pause (resume, restart, settings, tune car, main menu, full screen)
+- E: open or close the car tuner during a race (time slows down while it is open). The tune button on the speedometer does the same
 - Space: handbrake (start a drift)
 - Hold the left mouse button (or drag a finger) and move: free-look around the car, starting from the chase camera; the wheel zooms
 - There are no driving assists: the car behaves like a real one, and walls and cars act as solid obstacles
-- The E menu has Basic (the main settings), Advanced (everything else) and Presets tabs
+- The tuner has an Essentials page, and an Advanced switch that adds Body, Powertrain, Grip and Control. Presets are on the Presets button
+- Settings (audio, video, effects, interface, touch controls) are in the pause menu. Settings only show while the setting they depend on is on
+
+### Phones and tablets
+
+- The game is played full screen in landscape; a cover asks for full screen first. On an iPhone, add the page to the home screen
+- Steer with the pad on the left (or arrow buttons), gas and brake on the right. Drag the empty screen to look around
+- Settings, Controls, Edit layout: move each control, and change its size, touch area and opacity
+- The Garage tile in the main menu shows the real car up close while you pick a paint
 
 ## Troubleshooting
 

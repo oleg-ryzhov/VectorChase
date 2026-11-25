@@ -144,6 +144,8 @@ export function createAudio() {
   }
 
   function scheduleMusic() {
+    // After the tab was in the background the timer was throttled: skip ahead instead of playing the missed notes at once.
+    if (nextNote < ctx.currentTime - 0.2) nextNote = ctx.currentTime + 0.05;
     while (nextNote < ctx.currentTime + 0.4) {
       playStep(step, nextNote);
       nextNote += 60 / BPM / 4;
