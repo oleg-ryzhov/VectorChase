@@ -36,7 +36,8 @@ See `docs/DESIGN.md`.
 - Space: handbrake (start a drift)
 - Hold the left mouse button (or drag a finger) and move: free-look around the car, starting from the chase camera; the wheel zooms
 - There are no driving assists: the car behaves like a real one, and walls and cars act as solid obstacles
-- The tuner has an Essentials page, and an Advanced switch that adds Body, Powertrain, Grip and Control. Presets are on the Presets button
+- The tuner opens on a Basic page; the icon toggle in its top right corner switches to Advanced, which has four tabs. Presets are on the Presets button
+- Tuner keyboard: each setting on the page shows a key (1 to 0 by default; change them in Settings, Keys tabs). Press it to pick the setting. Left / Right change a slider (Shift for fine steps), Up / Down jump to its highest / lowest value. Space flips a switch or opens a list (Up / Down or Tab to move, Enter or Space to pick). Delete puts the picked setting back to stock. Tab and the arrow keys move around. The car tuning is remembered between visits
 - Settings (audio, video, effects, interface, touch controls) are in the pause menu. Settings only show while the setting they depend on is on
 
 ### Phones and tablets
@@ -71,3 +72,7 @@ Shortcuts (not marked on the road): on Neon Metropolis, Eiger Pass and Red Mesa 
 The Suzuka and Monza centre lines come from the [TUMFTM racetrack-database](https://github.com/TUMFTM/racetrack-database) (LGPL-3.0). Their heights, and the Suzuka bridge, are approximate, and the roads are a little wider than the real ones.
 
 New maps live in `src/maps/`: a map is a list of waypoints (with height, banking, bridge/tunnel and barrier-gap flags), a terrain height function and a theme. `src/maps/index.js` lists them.
+
+## Online accounts and leaderboards (optional)
+
+The game works fully offline. To turn on shared accounts and leaderboards, follow `docs/ONLINE_PLAN.txt`: run `supabase/schema.sql` in a Supabase project, put the public project URL and anon key in `src/online/config.js`, and set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` as Netlify environment variables. The service key is a secret: it never goes in the repository.

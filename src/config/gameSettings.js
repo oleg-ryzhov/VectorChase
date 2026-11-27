@@ -2,6 +2,8 @@
 // Pure logic: no DOM or Three.js imports. A setting can depend on another one ("requires"), and the menus
 // only show it while the setting it depends on has the right value.
 
+import { DEFAULT_SLOT_KEYS, SLOT_COUNT, isBindable } from './tunerKeys.js';
+
 export const SETTINGS_KEY = 'vectorchase.game';
 
 // [id, label, icon name]
@@ -11,6 +13,8 @@ export const TABS = [
   ['effects', 'Effects', 'sparkle'],
   ['hud', 'Interface', 'flag'],
   ['controls', 'Controls', 'touch'],
+  ['keys1', 'Keys 1-5', 'grid'],
+  ['keys2', 'Keys 6-10', 'grid'],
 ];
 
 // requires: [[id, 'eq' | 'ne', value], ...]. All of them must hold for the setting to show.
@@ -42,6 +46,12 @@ export const ITEMS = [
   { id: 'controls.sensitivity', tab: 'controls', type: 'slider', label: 'Pad sensitivity', min: 50, max: 150, step: 5, unit: '%', default: 100, requires: [['controls.touchMode', 'ne', 'off'], ['controls.scheme', 'eq', 'pad']] },
   { id: 'controls.haptics', tab: 'controls', type: 'toggle', label: 'Vibration on touch', default: true, requires: [['controls.touchMode', 'ne', 'off']] },
   { id: 'controls.editLayout', tab: 'controls', type: 'action', label: 'Button layout', hint: 'Move, resize and fade each control', buttonLabel: 'Edit layout', icon: 'move', requires: [['controls.touchMode', 'ne', 'off']] },
+
+  // The keys that pick a setting in the car tuner, one per slot.
+  ...Array.from({ length: SLOT_COUNT }, (_, i) => ({
+    id: `tuner.key${i + 1}`, tab: i < 5 ? 'keys1' : 'keys2', type: 'key', label: `Tuner setting ${i + 1}`,
+    hint: i % 5 === 0 ? 'Key that picks this setting in the car tuner' : undefined, default: DEFAULT_SLOT_KEYS[i],
+  })),
 ];
 
 const VALUE_ITEMS = ITEMS.filter((i) => i.type !== 'action');
@@ -65,6 +75,7 @@ export function visibleItems(tab, values) {
 
 function cleanValue(item, raw) {
   if (item.type === 'toggle') return typeof raw === 'boolean' ? raw : item.default;
+  if (item.type === 'key') return isBindable(raw) ? raw : item.default;
   if (item.type === 'choice') return item.options.some((o) => o[0] === raw) ? raw : item.default;
   if (item.type === 'slider') {
     const n = Number(raw);

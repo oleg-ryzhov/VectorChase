@@ -11,7 +11,7 @@ export const PARAMS = [
     description: 'Total vehicle mass including driver.',
   },
   {
-    id: 'chassis.frontWeight', group: 'Chassis', label: 'Front weight', unit: '%',
+    id: 'chassis.frontWeight', basic: true, group: 'Chassis', label: 'Front weight', unit: '%',
     min: 40, max: 60, step: 0.5, default: 52,
     description: 'Share of the weight over the front axle. Moves the centre of gravity.',
   },

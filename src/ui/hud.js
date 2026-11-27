@@ -6,7 +6,7 @@ import { listChanges, formatValue } from '../config/changes.js';
 const STYLE = `
 #dash .dash-tune{position:absolute;top:6px;left:8px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;cursor:pointer;pointer-events:auto}
 #dash .dash-tune:hover{background:rgba(255,255,255,.28)}
-#dash{position:fixed;right:16px;bottom:16px;width:170px;padding:10px 14px;box-sizing:border-box;background:rgba(0,0,0,.5);border-radius:10px;color:#fff;font-family:system-ui,sans-serif;z-index:5;pointer-events:none}
+#dash{position:fixed;right:16px;bottom:16px;width:170px;padding:10px 14px;box-sizing:border-box;background:rgba(11,15,23,.72);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.35);color:#fff;font-family:system-ui,sans-serif;z-index:5;pointer-events:none}
 #dash[hidden]{display:none}
 .dash-speed{font-size:44px;font-weight:700;line-height:1;text-align:right;font-variant-numeric:tabular-nums}
 .dash-unit{text-align:right;font-size:12px;color:#c9d2e0}
@@ -16,7 +16,7 @@ const STYLE = `
 #drift{position:fixed;top:95px;left:50%;transform:translateX(-50%);color:#ffd166;font:700 26px system-ui,sans-serif;text-shadow:0 2px 10px rgba(0,0,0,.7);z-index:5;pointer-events:none;white-space:nowrap}
 #minimap{position:fixed;top:10px;right:10px;width:200px;height:150px;z-index:5;pointer-events:none}
 #minimap[hidden]{display:none}
-#changes{position:fixed;left:8px;top:50px;max-width:260px;padding:8px 10px;background:rgba(0,0,0,.5);color:#ffd166;border-radius:8px;font:12px/1.4 system-ui,sans-serif;z-index:5;pointer-events:none}
+#changes{position:fixed;left:8px;top:50px;max-width:260px;padding:8px 10px;background:rgba(11,15,23,.72);border:1px solid rgba(255,255,255,.12);color:#ffd166;border-radius:10px;font:12px/1.4 system-ui,sans-serif;z-index:5;pointer-events:none}
 #changes[hidden]{display:none}
 `;
 

@@ -21,6 +21,27 @@ export function applyValues(values) {
   }
 }
 
+export const LAST_TUNE_KEY = 'vectorchase.tune';
+
+// The car tuning in use is kept between visits, so a reload does not undo it.
+export function saveLastTune(storage) {
+  try {
+    storage?.setItem(LAST_TUNE_KEY, JSON.stringify(snapshotValues()));
+  } catch {
+    /* storage is full or blocked: the tuning still works for this visit */
+  }
+}
+
+export function restoreLastTune(storage) {
+  try {
+    const raw = storage?.getItem(LAST_TUNE_KEY);
+    const values = raw ? JSON.parse(raw) : null;
+    if (values && typeof values === 'object' && !Array.isArray(values)) applyValues(values);
+  } catch {
+    /* unreadable: keep the stock tuning */
+  }
+}
+
 export function cleanName(name) {
   return String(name ?? '').trim().slice(0, MAX_NAME_LENGTH);
 }

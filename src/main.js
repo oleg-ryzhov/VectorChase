@@ -19,6 +19,9 @@ import { BotDriver } from './ai/bot.js';
 import { Race, pointsFor } from './race/race.js';
 import { recordRace, loadSettings } from './profile/profiles.js';
 import { subscribe } from './config/registry.js';
+import { saveLastTune, restoreLastTune } from './config/presets.js';
+import { createOnline } from './online/client.js';
+import { ONLINE_CONFIG } from './online/config.js';
 import { createEffects } from './effects/effects.js';
 import { createSettingsMenu } from './ui/settingsMenu.js';
 import { createGameSettings, pixelRatioFor, fovFor } from './config/gameSettings.js';
@@ -68,6 +71,17 @@ function getStorage() {
     return null; // blocked by the browser
   }
 }
+
+// The car tuning from the last visit, saved again shortly after every change.
+restoreLastTune(getStorage());
+let tuneSaveTimer = null;
+subscribe(() => {
+  clearTimeout(tuneSaveTimer);
+  tuneSaveTimer = setTimeout(() => saveLastTune(getStorage()), 400);
+});
+
+// Online accounts and shared leaderboards (off unless src/online/config.js is filled in).
+const online = createOnline({ ...ONLINE_CONFIG, storage: getStorage() });
 
 // Sound, picture, effects, interface and touch settings (the car tuning lives in config/registry.js).
 const gameSettings = createGameSettings(getStorage(), { touch: window.matchMedia?.('(pointer: coarse)').matches ?? false });
@@ -140,7 +154,7 @@ const effects = createEffects(scene, worldView);
 const input = new Input();
 const stepper = new FixedStepper(1 / 120, 8);
 const controls = { forward: false, back: false, left: false, right: false, handbrake: false };
-const settingsMenu = createSettingsMenu({ getStorage });
+const settingsMenu = createSettingsMenu({ getStorage, settings: gameSettings });
 const touchEditor = createTouchEditor({ settings: gameSettings });
 const gameMenu = createGameSettingsMenu({ settings: gameSettings, onEditLayout: () => touchEditor.open() });
 // True while any settings screen is on top of the game: input goes to it, not to the car.
@@ -179,6 +193,7 @@ let fpsTime = 0;
 function applyGameSettings() {
   const g = (id) => gameSettings.get(id);
   audio.setVolumes({ master: g('audio.master') / 100, sfx: g('audio.sfxVolume') / 100, music: g('audio.musicVolume') / 100, sfxOn: g('audio.sfx'), musicOn: g('audio.music') });
+  document.documentElement.dataset.quality = g('video.quality'); // menus blur the game behind them on High only
   const ratio = pixelRatioFor(g('video.quality'), window.devicePixelRatio);
   if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
   fpsCounter.hidden = !g('video.fps');
@@ -270,6 +285,7 @@ function outlineFor(id) {
 }
 
 const mainMenu = createMainMenu({
+  online,
   getStorage,
   skins: SKINS,
   maps: MAPS,
@@ -521,6 +537,14 @@ function finishRace() {
 
   if (ghost?.saved) saveNote += ' New best-lap ghost saved.';
   audio.jingle();
+
+  // Online: send the best lap. The server checks it again; the answer is added to the results note.
+  if (online.enabled && online.user && player.bestLap !== null) {
+    online
+      .submitScore({ mapId: prepared.config.id, timeMs: Math.round(player.bestLap * 1000) })
+      .then(() => raceUi.setSaveNote(`${saveNote} Lap time sent to the online leaderboard.`))
+      .catch((err) => raceUi.setSaveNote(`${saveNote} Online: ${err.message}`));
+  }
 
   raceUi.showResults({
     standings: order.map((e, i) => ({

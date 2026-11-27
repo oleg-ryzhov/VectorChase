@@ -6,7 +6,7 @@ const PREVENT_DEFAULT = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', '
 
 // Keys typed into text fields belong to the field, not the game.
 function isTextEntry(el) {
-  return el instanceof Element && el.matches('input[type="text"], input[type="number"], textarea, select');
+  return el instanceof Element && el.matches('input[type="text"], input[type="number"], input[type="email"], input[type="password"], textarea, select');
 }
 
 // Arrow keys and Space must keep working inside sliders and buttons.

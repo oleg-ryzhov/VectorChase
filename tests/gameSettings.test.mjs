@@ -88,3 +88,11 @@ test('quality, field of view and speed units convert sensibly', () => {
   assert.ok(Math.abs(speedInUnits(10, 'kph') - 36) < 1e-9);
   assert.ok(Math.abs(speedInUnits(10, 'mph') - 22.36936) < 1e-6);
 });
+
+test('tuner keys: defaults are the number row, and a stored key that cannot be bound falls back', () => {
+  const d = defaultValues();
+  assert.equal(d['tuner.key1'], 'Digit1');
+  assert.equal(d['tuner.key10'], 'Digit0');
+  const v = sanitize({ 'tuner.key1': 'KeyQ', 'tuner.key2': 'KeyE', 'tuner.key3': 'Escape', 'tuner.key4': 7 }, d);
+  assert.deepEqual([v['tuner.key1'], v['tuner.key2'], v['tuner.key3'], v['tuner.key4']], ['KeyQ', 'Digit2', 'Digit3', 'Digit4']);
+});

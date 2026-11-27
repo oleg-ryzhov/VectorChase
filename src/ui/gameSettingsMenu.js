@@ -4,7 +4,7 @@
 import { el } from './dom.js';
 import { icon } from './icons.js';
 import { ITEMS, TABS, isVisible } from '../config/gameSettings.js';
-import { ensureTheme, iconButton, actionButton, sliderRow, toggleRow, choiceRow, buttonRow } from './widgets.js';
+import { ensureTheme, iconButton, actionButton, sliderRow, toggleRow, choiceRow, buttonRow, keyRow } from './widgets.js';
 
 // settings: from createGameSettings. onEditLayout(): opens the touch editor. onClose(): after the screen closes.
 export function createGameSettingsMenu({ settings, onEditLayout = () => {}, onClose = () => {} }) {
@@ -43,6 +43,16 @@ export function createGameSettingsMenu({ settings, onEditLayout = () => {}, onCl
       row = toggleRow({ label: item.label, hint: item.hint, value: settings.get(item.id), onChange: (v) => settings.set(item.id, v) });
     } else if (item.type === 'choice') {
       row = choiceRow({ label: item.label, hint: item.hint, options: item.options, value: settings.get(item.id), onChange: (v) => settings.set(item.id, v) });
+    } else if (item.type === 'key') {
+      // A key can only be on one slot: taking a key that another slot has gives that slot this slot's old key.
+      row = keyRow({
+        label: item.label, hint: item.hint, value: settings.get(item.id),
+        onChange: (code) => {
+          const clash = ITEMS.find((o) => o.type === 'key' && o.id !== item.id && settings.get(o.id) === code);
+          if (clash) settings.set(clash.id, settings.get(item.id));
+          settings.set(item.id, code);
+        },
+      });
     } else {
       row = buttonRow({ label: item.label, hint: item.hint, buttonLabel: item.buttonLabel, iconName: item.icon, onClick: () => onEditLayout() });
     }

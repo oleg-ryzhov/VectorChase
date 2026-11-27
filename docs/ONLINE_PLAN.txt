@@ -1,0 +1,74 @@
+VECTORCHASE ONLINE PLAN: accounts, shared leaderboards, multiplayer
+====================================================================
+
+GOAL
+Players register safely, their lap times go on shared leaderboards, and later they race each other.
+The repository stays PUBLIC. No secret ever lives in the repository.
+
+RULES THAT DECIDE EVERYTHING
+R1. Public is fine: the game code, the database URL and the "anon" key are public by design.
+R2. Secret is not: the service key (database admin) and any other keys live ONLY in Netlify
+    environment variables. Never commit them. If one leaks: revoke and rotate it at once.
+R3. The browser can be edited by anyone. Never trust a time or a position it sends without checking.
+R4. Passwords are handled by the auth provider (Supabase Auth). We never store or hash passwords.
+R5. Row Level Security (RLS) is ON for every table. Players can only change their own rows.
+
+CHOSEN STACK
+- Database + accounts: Supabase (Postgres + Supabase Auth). Free tier is enough to start.
+- Server code: Netlify Functions (the game is already hosted on Netlify).
+- Live multiplayer (step 4 only): a small authoritative WebSocket server (PartyKit, Colyseus,
+  or Supabase Realtime for simple lobbies).
+
+STEP 0. SAFETY NET (you, 10 minutes)                                        [YOU]
+  0.1 GitHub repo > Settings > Code security: enable "Secret scanning" and "Push protection".
+  0.2 Add .env and .env.* to .gitignore (done in the code).
+  0.3 Create a free Supabase project. Note: Project URL, anon key (public), service_role key (SECRET).
+
+STEP 1. ACCOUNTS AND PROFILES                                               [CODE DONE, setup by YOU]
+  1.1 Run supabase/schema.sql in the Supabase SQL editor (tables, RLS, profile trigger).
+  1.2 Supabase > Authentication > Providers: keep Email on. Set the Site URL to the Netlify site.
+      Recommended: turn on "Confirm email" and CAPTCHA/rate limits in Authentication settings.
+  1.3 Put the Project URL and the anon key in src/online/config.js (both are public).
+  1.4 Game: register, sign in, sign out (src/online/client.js). The session is kept in localStorage.
+      With no config the game works exactly as before, fully offline.
+
+STEP 2. SHARED LEADERBOARDS WITH SERVER CHECKS                              [CODE DONE, setup by YOU]
+  2.1 In Netlify > Site settings > Environment variables set:
+        SUPABASE_URL           (the Project URL)
+        SUPABASE_SERVICE_KEY   (the service_role key, SECRET, never in the repo)
+  2.2 Players can NOT write to the scores table directly (RLS). Only the function
+      netlify/functions/submit-score.js can, with the service key.
+  2.3 The function checks: valid login token, known map, lap time inside a believable range
+      (set per map in netlify/functions/lib/validate.js), and a minimum gap between submissions.
+  2.4 Leaderboard reads are public (best time per player per map, view "leaderboard").
+  2.5 Calibrate the minimum times: race each map flat out, then set minMs a little below your best.
+  2.6 Later hardening: store the input log of the lap and re-simulate it on the server.
+
+STEP 3. LOBBIES AND FRIEND RACES                                            [NOT STARTED]
+  3.1 Table "lobbies" (host, map, laps, status) and "lobby_players" with RLS.
+  3.2 Supabase Realtime channel per lobby: join, leave, ready, start signal.
+  3.3 Each client races its own car; others are shown as ghosts using positions sent about 10 times a
+      second. Results are sent to the submit function, which checks them.
+  3.4 No server physics needed yet. Cheating is limited to the lobby; ranked results still go through
+      step 2 checks.
+
+STEP 4. LIVE MULTIPLAYER WITH AN AUTHORITATIVE SERVER                       [NOT STARTED]
+  4.1 Run the vehicle physics (src/physics, plain ES modules) on a server that holds WebSockets.
+  4.2 Clients send only inputs (throttle, brake, steer). The server sends back positions.
+  4.3 Client-side prediction and smoothing so the car feels instant.
+  4.4 Host on Fly.io or Render (needs a long-lived process, so not Netlify Functions).
+  4.5 This is the largest step: do it only after steps 1 to 3 work and have players.
+
+STEP 5. OPERATIONS
+  5.1 Rate limits and a ban list (profiles.banned).
+  5.2 Privacy page: what is stored (username, email in Supabase Auth, lap times).
+  5.3 Backups (Supabase daily backups on paid tier, or a weekly export).
+  5.4 Watch the Supabase and Netlify usage dashboards.
+
+WHAT IS IN THE REPOSITORY AFTER STEPS 1 AND 2
+  supabase/schema.sql                    database tables, RLS, view, signup trigger
+  netlify/functions/submit-score.js      checked score submission (uses secret env vars)
+  netlify/functions/lib/validate.js      pure checks, unit tested
+  src/online/config.js                   public URL and anon key (empty = offline mode)
+  src/online/client.js                   register, sign in, leaderboard, submit
+  tests/online.test.mjs                  tests with a fake network

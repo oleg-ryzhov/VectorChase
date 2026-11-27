@@ -99,3 +99,23 @@ test('a snapshot can be applied to restore the same values', () => {
   assert.equal(getParam('wheel.radius'), 0.35);
   resetAll();
 });
+
+test('the tuning in use is saved and restored, and damaged data is ignored', async () => {
+  const { saveLastTune, restoreLastTune, LAST_TUNE_KEY } = await import('../src/config/presets.js');
+  const { setParam, getParam, resetAll } = await import('../src/config/registry.js');
+  const data = new Map();
+  const storage = { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v) };
+  resetAll();
+  setParam('engine.power', 400);
+  saveLastTune(storage);
+  resetAll();
+  assert.equal(getParam('engine.power'), 250);
+  restoreLastTune(storage);
+  assert.equal(getParam('engine.power'), 400);
+  for (const bad of ['not json', '[1,2]', '"x"', 'null']) {
+    data.set(LAST_TUNE_KEY, bad);
+    restoreLastTune(storage); // must not throw
+  }
+  restoreLastTune(null);
+  resetAll();
+});

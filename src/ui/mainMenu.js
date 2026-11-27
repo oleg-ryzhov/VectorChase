@@ -19,23 +19,28 @@ const OPPONENTS = [[0, 'Off'], ...[1, 2, 3, 4, 5].map((n) => [n, String(n)])];
 const DIFFICULTIES = [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']];
 
 const STYLE = `
-#main-menu{z-index:20;align-items:stretch;justify-content:stretch;background:linear-gradient(90deg,rgba(8,11,18,.95) 0%,rgba(8,11,18,.8) 52%,rgba(8,11,18,.5) 100%)}
+#main-menu{z-index:20;align-items:stretch;justify-content:stretch;background:radial-gradient(900px 480px at 88% -8%,rgba(214,40,57,.16),transparent 62%),linear-gradient(90deg,rgba(8,11,18,.95) 0%,rgba(8,11,18,.8) 52%,rgba(8,11,18,.5) 100%)}
 .mm-shell{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:max(10px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
 .mm-top{display:flex;align-items:center;gap:8px;min-height:48px}
-.mm-logo{flex:1;font-size:26px;font-weight:800;letter-spacing:.14em;white-space:nowrap}
+.mm-logo{flex:1;font-size:26px;font-weight:800;letter-spacing:.14em;white-space:nowrap;text-shadow:0 2px 18px rgba(214,40,57,.35)}
 .mm-logo span{color:var(--vc-accent)}
 .mm-chip{display:inline-flex;align-items:center;gap:8px;min-height:44px;max-width:44vw;padding:0 14px;background:var(--vc-panel2);color:var(--vc-text);border:1px solid var(--vc-line);border-radius:22px;font:inherit;font-weight:600;cursor:pointer;overflow:hidden;white-space:nowrap}
 .mm-chip span{overflow:hidden;text-overflow:ellipsis}
+.mm-chip{transition:background .12s,border-color .12s}
+.mm-chip:hover{background:#22304f;border-color:var(--vc-edge)}
 .mm-grid{flex:1;min-height:0;display:grid;gap:18px;grid-template-columns:minmax(260px,.9fr) 1.5fr;padding-top:8px}
 .mm-col{min-height:0;min-width:0;display:flex;flex-direction:column;gap:12px}
 .mm-left{justify-content:center}
-.mm-race{min-height:84px;font-size:26px;letter-spacing:.12em;border-radius:18px;box-shadow:0 8px 28px rgba(230,57,70,.4)}
+.mm-race{min-height:84px;font-size:26px;letter-spacing:.12em;border-radius:18px;animation:mm-pulse 2.6s ease-in-out infinite}
+@keyframes mm-pulse{0%,100%{box-shadow:0 8px 28px rgba(214,40,57,.4),inset 0 1px 0 rgba(255,255,255,.2)}50%{box-shadow:0 10px 42px rgba(214,40,57,.7),inset 0 1px 0 rgba(255,255,255,.2)}}
 .mm-race svg{width:30px;height:30px}
 .mm-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.mm-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:78px;padding:6px;background:var(--vc-panel2);color:var(--vc-text);border:1px solid var(--vc-line);border-radius:16px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
-.mm-tile:hover{background:#22304f}
+.mm-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:78px;padding:6px;background:linear-gradient(180deg,#1d2945,var(--vc-panel2));color:var(--vc-text);border:1px solid var(--vc-line);border-radius:16px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background .12s,transform .1s,border-color .12s}
+.mm-tile svg{color:var(--vc-blue)}
+.mm-tile:active{transform:scale(.97)}
+.mm-tile:hover{background:linear-gradient(180deg,#2a3a60,#1f2d4c);border-color:var(--vc-edge);transform:translateY(-2px)}
 .mm-hint{color:var(--vc-mute);font-size:12px}
-.mm-card{display:flex;flex-direction:column;gap:6px;padding:12px;background:rgba(17,24,38,.86);border:1px solid var(--vc-line);border-radius:18px;min-height:0}
+.mm-card{display:flex;flex-direction:column;gap:6px;padding:12px;background:linear-gradient(180deg,rgba(24,34,56,.9),rgba(17,24,38,.9));border:1px solid var(--vc-line);border-radius:18px;min-height:0;box-shadow:0 12px 36px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05)}
 .mm-map{display:flex;align-items:center;gap:6px}
 .mm-preview{flex:1;min-width:0;height:clamp(90px,24vh,190px);display:flex;align-items:center;justify-content:center;background:#0c1220;border:1px solid var(--vc-line);border-radius:14px;touch-action:pan-y}
 .mm-preview svg{width:100%;height:100%}
@@ -52,7 +57,8 @@ const STYLE = `
 .mm-ghost .grow b{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--vc-mute)}
 .mm-ghost .grow small{color:var(--vc-mute);font-size:12px}
 .mm-paint{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.mm-swatch{width:34px;height:34px;padding:0;border-radius:50%;border:2px solid var(--vc-line);cursor:pointer}
+.mm-swatch{width:34px;height:34px;padding:0;border-radius:50%;border:2px solid var(--vc-edge);cursor:pointer;transition:transform .1s}
+.mm-swatch:hover{transform:scale(1.12)}
 .mm-swatch.on{border-color:#fff;box-shadow:0 0 0 3px var(--vc-blue)}
 .mm-skinname{font-size:13px;font-weight:600;margin-left:4px}
 .mm-nav,.mm-race-narrow{display:none}
@@ -60,11 +66,12 @@ const STYLE = `
 .mm-sheet{z-index:22}
 .mm-sheet .vc-body{padding:12px 16px;gap:10px}
 .mm-who{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.mm-who input{flex:1;min-width:140px;height:44px;padding:0 12px;background:#0c1220;color:var(--vc-text);border:1px solid var(--vc-line);border-radius:12px;font:inherit}
+.mm-who input{flex:1;min-width:140px;height:44px;padding:0 12px;background:#0c1220;color:var(--vc-text);border:1px solid var(--vc-edge);border-radius:12px;font:inherit}
 .mm-board{flex:1;min-height:0;overflow:hidden}
 .mm-brow{display:grid;grid-template-columns:30px 1fr 56px 44px 80px;gap:6px;align-items:center;height:44px;border-bottom:1px solid #1b2540;font-variant-numeric:tabular-nums}
 .mm-brow.head{color:var(--vc-mute);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-.mm-brow.me{color:var(--vc-warn)}
+.mm-brow.me{color:var(--vc-warn);background:rgba(255,209,102,.08);font-weight:700}
+.mm-brow:not(.head):hover{background:rgba(255,255,255,.03)}
 .mm-dup{display:none}
 .mm-garage{z-index:21;flex-direction:column;align-items:stretch;justify-content:space-between;background:linear-gradient(180deg,rgba(5,8,14,.6) 0,rgba(5,8,14,0) 24%,rgba(5,8,14,0) 56%,rgba(5,8,14,.88) 100%)}
 .mm-garage-top{display:flex;align-items:center;gap:10px;padding:max(8px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 0 max(14px,env(safe-area-inset-left))}
@@ -114,7 +121,7 @@ const STYLE = `
 `;
 
 // getOutline(mapId) -> { points: [[x, z], ...], length } or null. Called after the menu is drawn.
-export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart, onTune = () => {}, onGarage = () => {}, getOutline = () => null }) {
+export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onMapChange = () => {}, onStart, onTune = () => {}, onGarage = () => {}, getOutline = () => null, online = null }) {
   ensureTheme();
   addStyle(STYLE);
   const store = getStorage();
@@ -486,25 +493,96 @@ export function createMainMenu({ getStorage, skins, maps = [], onSkinChange, onM
       body.append(who, el('div', 'vc-note', 'Guests can race, but their scores are not saved.'));
     }
     body.append(message);
+    if (online?.enabled) drawOnline(body);
+  }
+
+  // An online account (email and password, kept by Supabase). Separate from the local profile above.
+  function drawOnline(body) {
+    const status = el('div', 'vc-note');
+    body.append(el('div', 'mm-mapname', 'Online account'));
+    if (online.user) {
+      body.append(el('div', 'vc-note', `Signed in online as ${online.user.username}. Your best laps go on the shared leaderboard.`), actionButton('Sign out online', 'user', async () => {
+        await online.signOut();
+        sheet?.redraw?.();
+      }, 'small'));
+      return;
+    }
+    const field = (type, placeholder, auto, max) => {
+      const i = el('input');
+      i.type = type;
+      i.placeholder = placeholder;
+      i.autocomplete = auto;
+      if (max) i.maxLength = max;
+      return i;
+    };
+    const email = field('email', 'Email', 'email', 120);
+    const password = field('password', 'Password (8+ characters)', 'current-password', 72);
+    const name = field('text', 'Username (to register)', 'off', 16);
+    const run = (job) => async () => {
+      status.textContent = 'Working...';
+      try {
+        status.textContent = await job();
+      } catch (err) {
+        status.textContent = err.message;
+      }
+      if (online.user) sheet?.redraw?.();
+    };
+    const who = el('div', 'mm-who');
+    who.append(email, password, name);
+    const buttons = el('div', 'mm-who');
+    buttons.append(
+      actionButton('Register online', 'check', run(async () => ((await online.signUp(email.value.trim(), password.value, name.value.trim())).signedIn ? 'Registered.' : 'Check your email to confirm, then sign in.')), 'primary'),
+      actionButton('Sign in online', 'user', run(async () => {
+        await online.signIn(email.value.trim(), password.value);
+        return 'Signed in.';
+      })),
+    );
+    body.append(who, buttons, status);
   }
   function drawBoard(body) {
-    const rows = store ? leaderboard(store, 50, settings.map) : [];
+    let mode = 'device';
+    let onlineRows = [];
+    let note = '';
     const box = el('div', 'mm-board');
     const pager = createPager(() => fill());
-    body.append(box, pager.node, el('div', 'vc-note', `${maps.find((m) => m.id === settings.map)?.name ?? ''} | scores stay on this device`));
+    const footer = el('div', 'vc-note');
+    const mapName = maps.find((m) => m.id === settings.map)?.name ?? '';
+    if (online?.enabled) {
+      body.append(segmented([['device', 'This device'], ['online', 'Online']], mode, (m) => {
+        mode = m;
+        pager.setPage(0);
+        if (m === 'online') loadOnline();
+        fill();
+      }).node);
+    }
+    body.append(box, pager.node, footer);
+    function loadOnline() {
+      note = 'Loading...';
+      online.leaderboard(settings.map)
+        .then((r) => { onlineRows = r; note = ''; })
+        .catch((e) => { onlineRows = []; note = e.message; })
+        .finally(() => mode === 'online' && fill());
+    }
     function fill() {
+      const isOnline = mode === 'online';
+      const rows = isOnline ? onlineRows : store ? leaderboard(store, 50, settings.map) : [];
+      footer.textContent = `${mapName} | ${isOnline ? 'online scores' : 'scores stay on this device'}`;
       if (rows.length === 0) {
-        box.replaceChildren(el('div', 'vc-note', 'No scores yet. Register, then finish a race.'));
+        pager.setPages(1);
+        box.replaceChildren(el('div', 'vc-note', isOnline ? note || 'No online scores yet.' : 'No scores yet. Register, then finish a race.'));
         return;
       }
       const { perPage, pages } = computePaging(300, Math.max(box.clientHeight || 200, 88) - 44, 44, rows.length);
       pager.setPages(pages);
       const head = el('div', 'mm-brow head');
-      for (const h of ['#', 'Player', 'Pts', 'Win', 'Best lap']) head.append(el('span', '', h));
+      for (const h of isOnline ? ['#', 'Player', 'Runs', '', 'Best lap'] : ['#', 'Player', 'Pts', 'Win', 'Best lap']) head.append(el('span', '', h));
       box.replaceChildren(head, ...rows.slice(pager.page * perPage, pager.page * perPage + perPage).map((u, i) => {
-        const r = el('div', `mm-brow${user && u.name === user.name ? ' me' : ''}`);
-        const best = u.bestLaps[settings.map] === undefined ? '-' : formatTime(u.bestLaps[settings.map] / 1000);
-        for (const cell of [pager.page * perPage + i + 1, u.name, u.points, u.wins, best]) r.append(el('span', '', String(cell)));
+        const mine = isOnline ? online.user?.username === u.username : user && u.name === user.name;
+        const r = el('div', `mm-brow${mine ? ' me' : ''}`);
+        const cells = isOnline
+          ? [u.username, u.runs, '', formatTime(u.best_ms / 1000)]
+          : [u.name, u.points, u.wins, u.bestLaps[settings.map] === undefined ? '-' : formatTime(u.bestLaps[settings.map] / 1000)];
+        for (const cell of [pager.page * perPage + i + 1, ...cells]) r.append(el('span', '', String(cell)));
         return r;
       }));
     }

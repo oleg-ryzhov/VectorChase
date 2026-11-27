@@ -9,7 +9,7 @@ import { CONTROLS, LIMITS, controlsFor, sanitizeLayout, boxFor, defaultEntry, de
 const STYLE = `
 #touch-editor{z-index:30;background:rgba(5,8,14,.5);align-items:stretch;justify-content:stretch}
 #touch-editor .te-stage{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:40px 40px}
-#touch-editor .th{border:2px dashed rgba(255,255,255,.25);border-radius:14px;cursor:grab}
+#touch-editor .th{border:2px dashed rgba(255,255,255,.45);border-radius:14px;cursor:grab}
 #touch-editor .th.sel{border-color:#4da3ff;background:rgba(77,163,255,.12)}
 #touch-editor .te-panel{position:absolute;left:50%;transform:translateX(-50%);width:min(760px,calc(100vw - 16px));padding:10px 12px;background:rgba(17,24,38,.96);border:1px solid var(--vc-line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
 #touch-editor .te-top{top:calc(8px + env(safe-area-inset-top,0px))}

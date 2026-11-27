@@ -1,37 +1,41 @@
-import { el, button, addStyle } from './dom.js';
+import { el, addStyle } from './dom.js';
 import { ensureTheme, actionButton } from './widgets.js';
 import { toggleFullscreen, fullscreenSupported } from './fullscreen.js';
 import { formatTime } from '../race/race.js';
 
 const STYLE = `
-#race-status{position:fixed;top:10px;left:50%;transform:translateX(-50%);text-align:center;color:#fff;background:rgba(0,0,0,.5);padding:6px 16px;border-radius:8px;font:600 16px system-ui,sans-serif;z-index:5;pointer-events:none}
+#race-status{position:fixed;top:10px;left:50%;transform:translateX(-50%);text-align:center;color:#fff;background:rgba(11,15,23,.72);border:1px solid rgba(255,255,255,.12);padding:8px 18px;border-radius:14px;font:700 16px/1.25 system-ui,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:.03em;box-shadow:0 6px 20px rgba(0,0,0,.35);z-index:5;pointer-events:none}
 #race-status[hidden]{display:none}
-#race-ghost{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);padding:3px 12px;border-radius:6px;background:rgba(0,0,0,.5);font:700 18px system-ui,sans-serif;z-index:5;pointer-events:none}
+#race-ghost{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);padding:4px 14px;border-radius:999px;background:rgba(11,15,23,.72);border:1px solid rgba(255,255,255,.12);font:700 18px system-ui,sans-serif;font-variant-numeric:tabular-nums;z-index:5;pointer-events:none}
 #race-ghost[hidden]{display:none}
 #race-ghost.ahead{color:#7dff9a}
-#race-ghost.behind{color:#ff8080}
-.rs-sub{font-weight:400;font-size:12px;color:#c9d2e0}
-.rs-warn{font-size:13px;color:#ff8080}
-#race-countdown{position:fixed;top:30%;left:0;right:0;text-align:center;color:#fff;font:700 120px system-ui,sans-serif;text-shadow:0 4px 24px rgba(0,0,0,.6);z-index:5;pointer-events:none}
-#race-results{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(520px,94vw);box-sizing:border-box;padding:18px 22px;background:rgba(10,13,20,.94);color:#e8ecf3;border-radius:12px;font:14px/1.4 system-ui,sans-serif;z-index:20}
-#race-results[hidden]{display:none}
-#race-pause{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,94vw);box-sizing:border-box;padding:18px 22px;background:rgba(10,13,20,.94);color:#e8ecf3;border-radius:12px;font:14px/1.4 system-ui,sans-serif;z-index:20}
-#race-pause[hidden]{display:none}
-#race-pause h2{margin:0 0 12px}
+#race-ghost.behind{color:#ff9a9a}
+.rs-sub{font-weight:500;font-size:13px;color:#c9d2e0}
+.rs-warn{font-size:13px;font-weight:700;color:#ff9a9a}
+#race-countdown{position:fixed;top:30%;left:0;right:0;text-align:center;color:#fff;font:800 120px system-ui,sans-serif;text-shadow:0 4px 32px rgba(214,40,57,.55),0 2px 8px rgba(0,0,0,.6);z-index:5;pointer-events:none}
+#race-results,#race-pause{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);box-sizing:border-box;padding:20px 24px 24px;background:linear-gradient(180deg,#151e30,var(--vc-panel,#111826) 120px);color:var(--vc-text,#e8ecf3);border:1px solid var(--vc-line,#26324f);border-radius:16px;box-shadow:0 0 0 100vmax rgba(5,8,14,.55),0 24px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;z-index:20;animation:vc-rise .2s var(--vc-ease,ease-out)}
+#race-results{width:min(560px,94vw)}
+#race-pause{width:min(440px,94vw)}
+#race-results[hidden],#race-pause[hidden]{display:none}
+#race-results h2,#race-pause h2{margin:0 0 14px;font-size:20px;letter-spacing:.04em}
+#race-results h2::before,#race-pause h2::before{content:'';display:inline-block;width:4px;height:1em;margin-right:10px;border-radius:2px;background:var(--vc-accent,#e63946);vertical-align:-.14em}
 .rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .rp-grid .vc-btn{min-height:52px}
 .rp-grid .wide{grid-column:1/-1}
-#race-pause button{background:#2a3242;color:inherit;border:1px solid #3d4760;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
-#race-results h2{margin:0 0 10px}
-#race-results table{width:100%;border-collapse:collapse}
-#race-results th,#race-results td{text-align:left;padding:4px 6px;border-bottom:1px solid #222a3a}
-#race-results tr.me td{color:#ffd166}
-.rr-note{margin:10px 0;color:#9aa4b5;font-size:12px}
+.rp-grid .primary{min-height:60px;font-size:18px}
+#race-results table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+#race-results th{text-align:left;padding:6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--vc-mute,#8d9ab0);border-bottom:1px solid var(--vc-edge,#62729a)}
+#race-results td{text-align:left;padding:8px 6px;border-bottom:1px solid #1b2540}
+#race-results tr:nth-child(2) td:first-child{color:var(--vc-warn,#ffd166);font-weight:800}
+#race-results tr.me td{color:var(--vc-warn,#ffd166);font-weight:700;background:rgba(255,209,102,.08)}
+.rr-note{margin:12px 0;color:var(--vc-mute,#8d9ab0);font-size:13px}
 .rr-buttons{display:flex;gap:10px}
-#race-results button{background:#2a3242;color:inherit;border:1px solid #3d4760;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
+.rr-buttons .vc-btn{flex:1;min-height:52px}
+@media (prefers-reduced-motion:reduce){#race-results,#race-pause{animation:none}}
 `;
 
 export function createRaceUi() {
+  ensureTheme();
   addStyle(STYLE);
 
   const status = el('div');
@@ -55,6 +59,7 @@ export function createRaceUi() {
   pause.hidden = true;
   document.body.append(status, ghostLine, countdown, results, pause);
 
+  let noteLine = null;
   return {
     setStatus({ position, total, lap, laps, time, bestLap, offTrack }) {
       status.hidden = false;
@@ -101,6 +106,9 @@ export function createRaceUi() {
       results.replaceChildren();
     },
     // standings: [{ position, name, isPlayer, finished, time, lapsDone, bestLap, points }]
+    setSaveNote(text) {
+      if (noteLine) noteLine.textContent = text;
+    },
     showResults({ standings, laps, saveNote, onAgain, onMenu }) {
       results.replaceChildren();
       const me = standings.find((r) => r.isPlayer);
@@ -118,13 +126,12 @@ export function createRaceUi() {
         table.append(tr);
       }
 
-      const again = button('Race again');
-      const menu = button('Main menu');
-      again.addEventListener('click', onAgain);
-      menu.addEventListener('click', onMenu);
+      const again = actionButton('Race again', 'reset', onAgain, 'primary');
+      const menu = actionButton('Main menu', 'flag', onMenu);
       const buttons = el('div', 'rr-buttons');
       buttons.append(again, menu);
-      results.append(table, el('div', 'rr-note', saveNote), buttons);
+      noteLine = el('div', 'rr-note', saveNote);
+      results.append(table, noteLine, buttons);
       results.hidden = false;
     },
   };
