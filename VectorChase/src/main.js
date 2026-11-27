@@ -1,0 +1,917 @@
+import * as THREE from 'three';
+import { FixedStepper } from './core/time.js';
+import { Input } from './core/input.js';
+import { runLoop } from './core/loop.js';
+import { MAPS } from './maps/index.js';
+import { prepareMap } from './maps/prepare.js';
+import { buildMapScene } from './scene/mapScene.js';
+import { TrackTracker } from './track/tracker.js';
+import { Vehicle } from './physics/vehicle.js';
+import { readCarSpec } from './physics/spec.js';
+import { resolveCollisions } from './physics/collisions.js';
+import { createCarModel, setCarEnvironment } from './car/carModel.js';
+import { createCarEnvironment } from './car/environment.js';
+import { createAudio } from './audio/audio.js';
+import { crashStrength, landingStrength } from './audio/mapping.js';
+import { GhostRecorder, ghostPose, ghostTimeAt, loadGhost, saveGhost } from './race/ghost.js';
+import { SKINS, findSkin } from './car/skins.js';
+import { BotDriver } from './ai/bot.js';
+import { Race, pointsFor } from './race/race.js';
+import { recordRace, loadSettings } from './profile/profiles.js';
+import { subscribe } from './config/registry.js';
+import { createEffects } from './effects/effects.js';
+import { createSettingsMenu } from './ui/settingsMenu.js';
+import { createGameSettings, pixelRatioFor, fovFor } from './config/gameSettings.js';
+import { createGameSettingsMenu } from './ui/gameSettingsMenu.js';
+import { createTouchEditor } from './ui/touchEditor.js';
+import { createFullscreenGate } from './ui/fullscreen.js';
+import { createTouchControls } from './ui/touchControls.js';
+import { PERSONALITIES } from './ai/personalities.js';
+import { createMainMenu } from './ui/mainMenu.js';
+import { createRaceUi } from './ui/raceUi.js';
+import { createHud } from './ui/hud.js';
+import { StyleTracker } from './game/style.js';
+import { FreeLook } from './camera/freeLook.js';
+
+const SKY_COLOR = 0x9cc3e6;
+const FIRST_PERSON_FOV = 72;
+const FULL_SPEED = 60; // m/s at which the boost is complete
+const CHASE_DISTANCE = 8;
+const CHASE_HEIGHT = 3;
+const ORBIT_RADIUS = 7.5;
+const CHASE_LOOK_AHEAD = 4; // m past the car that the chase cameras aim at
+const VIEW_BLEND_SECONDS = 0.35; // smooth switch between first-person, chase and rear views
+const CAMERA_MODES = ['first', 'chase', 'rear'];
+const ORBIT_HEIGHT = 2.4;
+const PITCH_PER_ACCEL = 0.0035; // rad of body pitch per m/s^2
+const ROLL_PER_ACCEL = 0.004; // rad of body roll per m/s^2
+const MAX_BODY_ANGLE = 0.06;
+const MENU_TIME_SCALE = 0.1; // simulation speed while the settings menu is open
+const TIME_EASE_RATE = 10; // 1/s
+const SPARK_SPEED_LOSS = 2.5; // m/s lost in one physics step that counts as an impact
+
+const GRID_FIRST_GAP = 12; // m behind the start line for the first row
+const GRID_ROW_GAP = 9;
+const GRID_LANE = 3.5; // m left or right of the centre line
+const GRID_STAGGER = 4.5; // right-hand cars sit this much further back
+const BOT_NAMES = PERSONALITIES.map((p) => p.name); // each bot name belongs to one personality
+const LANE_OFFSETS = [-3, 3, -1.5, 1.5, 0];
+const STUCK_SECONDS = 4;
+const OFF_ROAD_SECONDS = 6;
+
+const hud = document.getElementById('hud');
+
+function getStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null; // blocked by the browser
+  }
+}
+
+// Sound, picture, effects, interface and touch settings (the car tuning lives in config/registry.js).
+const gameSettings = createGameSettings(getStorage(), { touch: window.matchMedia?.('(pointer: coarse)').matches ?? false });
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(pixelRatioFor(gameSettings.get('video.quality'), window.devicePixelRatio));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+setCarEnvironment(createCarEnvironment(renderer)); // lets the paint and glass reflect something
+
+// Free look: hold the left mouse button (or drag a finger) and move to orbit the car; the wheel zooms.
+const look = new FreeLook();
+{
+  const canvas = renderer.domElement;
+  let lastX = 0;
+  let lastY = 0;
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !isRacing() || overlayOpen() || paused) return;
+    look.start();
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.setPointerCapture?.(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    look.drag(e.clientX - lastX, e.clientY - lastY);
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  const stopLook = () => {
+    look.end();
+    canvas.style.cursor = '';
+  };
+  canvas.addEventListener('pointerup', stopLook);
+  canvas.addEventListener('pointercancel', stopLook);
+  canvas.addEventListener('wheel', (e) => look.zoom(e.deltaY), { passive: true });
+}
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(SKY_COLOR);
+scene.fog = new THREE.Fog(SKY_COLOR, 500, 2600);
+
+const camera = new THREE.PerspectiveCamera(FIRST_PERSON_FOV, window.innerWidth / window.innerHeight, 0.1, 6000);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 1.0);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 260 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.3;
+scene.add(sun, sun.target);
+const sunDir = new THREE.Vector3(0.5, 0.8, 0.35).normalize();
+
+// The map being raced on. installMap() swaps these when another map is picked.
+const mapById = (id) => MAPS.find((m) => m.id === id) ?? MAPS[0];
+let prepared = prepareMap(mapById(loadSettings(getStorage()).map).build());
+let track = prepared.track;
+let world = prepared.world;
+let mapScene = null;
+const worldView = { groundHeight: (x, z, y) => world.groundHeight(x, z, y) };
+const effects = createEffects(scene, worldView);
+
+const input = new Input();
+const stepper = new FixedStepper(1 / 120, 8);
+const controls = { forward: false, back: false, left: false, right: false, handbrake: false };
+const settingsMenu = createSettingsMenu({ getStorage });
+const touchEditor = createTouchEditor({ settings: gameSettings });
+const gameMenu = createGameSettingsMenu({ settings: gameSettings, onEditLayout: () => touchEditor.open() });
+// True while any settings screen is on top of the game: input goes to it, not to the car.
+const overlayOpen = () => settingsMenu.isOpen || gameMenu.isOpen || touchEditor.isOpen;
+// On a phone or tablet the game is only played full screen: if it ends mid-race, the race pauses.
+const fullscreenGate = createFullscreenGate({
+  touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  onLost: () => isRacing() && setPaused(true),
+});
+const cycleCamera = () => {
+  cameraMode = CAMERA_MODES[(CAMERA_MODES.indexOf(cameraMode) + 1) % CAMERA_MODES.length];
+};
+const touch = createTouchControls({
+  settings: gameSettings,
+  onPause: () => isRacing() && !overlayOpen() && setPaused(!paused),
+  onTune: () => isRacing() && !paused && !gameMenu.isOpen && settingsMenu.toggle(),
+  onCamera: () => isRacing() && !paused && !overlayOpen() && cycleCamera(),
+});
+const raceUi = createRaceUi();
+const audio = createAudio();
+// Browsers only allow sound after a click or key press.
+for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, () => audio.start(), { once: true });
+
+const hudPanel = createHud(track, { onTune: () => isRacing() && !paused && !gameMenu.isOpen && settingsMenu.toggle() });
+
+// Frame rate readout (Settings, Video).
+const fpsCounter = document.createElement('div');
+fpsCounter.id = 'fps';
+fpsCounter.style.cssText = 'position:fixed;left:50%;top:6px;transform:translateX(-50%);padding:2px 8px;border-radius:6px;background:rgba(0,0,0,.5);color:#9ef0b0;font:12px system-ui,sans-serif;z-index:7;pointer-events:none';
+fpsCounter.hidden = true;
+document.body.appendChild(fpsCounter);
+let fpsFrames = 0;
+let fpsTime = 0;
+
+// Applies the game settings now, and again whenever one changes.
+function applyGameSettings() {
+  const g = (id) => gameSettings.get(id);
+  audio.setVolumes({ master: g('audio.master') / 100, sfx: g('audio.sfxVolume') / 100, music: g('audio.musicVolume') / 100, sfxOn: g('audio.sfx'), musicOn: g('audio.music') });
+  const ratio = pixelRatioFor(g('video.quality'), window.devicePixelRatio);
+  if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
+  fpsCounter.hidden = !g('video.fps');
+  effects.setOptions({ skid: g('effects.skid'), smoke: g('effects.smoke'), smokeAmount: g('effects.smokeAmount') / 100, sparks: g('effects.sparks') });
+  hudPanel.setOptions({ minimap: g('hud.minimap'), speedo: g('hud.speedo'), units: g('hud.units') });
+}
+gameSettings.subscribe(applyGameSettings);
+applyGameSettings();
+const style = new StyleTracker();
+
+// ---- Entrants -------------------------------------------------------------------------
+
+let race = null; // the current Race, or null while in the menu
+let entrants = []; // bots first, the player last
+let resultsShown = false;
+let nextId = 0;
+
+function createEntrant({ name, isPlayer, skin, driver = null }) {
+  const model = createCarModel(skin);
+  scene.add(model.root);
+  model.root.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
+  return {
+    id: nextId++,
+    name,
+    isPlayer,
+    color: skin.color,
+    driver,
+    model,
+    car: new Vehicle({ ground: world }),
+    tracker: new TrackTracker(track),
+    stuckTime: 0,
+    offRoadTime: 0,
+  };
+}
+
+function removeEntrant(e) {
+  scene.remove(e.model.root);
+  e.model.dispose();
+}
+
+// Slot 0 is the front row; the player is last in the list, so starts at the back.
+function placeOnGrid(list) {
+  const { points, spacing, length } = track;
+  const n = points.length;
+  list.forEach((e, i) => {
+    const side = i % 2 === 0 ? -1 : 1;
+    const total = -(GRID_FIRST_GAP + Math.floor(i / 2) * GRID_ROW_GAP + (i % 2) * GRID_STAGGER);
+    const s = ((total % length) + length) % length;
+    const p = points[Math.round(s / spacing) % n];
+    e.car.reset(p.x + p.nx * side * GRID_LANE, p.z + p.nz * side * GRID_LANE, Math.atan2(p.tz, p.tx), p.y);
+    e.tracker.setProgress(total);
+    e.stuckTime = 0;
+    e.offRoadTime = 0;
+  });
+}
+
+// Puts a car back on the centre line where it last made progress.
+function respawn(e) {
+  if (e.isPlayer) lastSpeed = 0; // the sudden stop is not a crash
+  if (e.isPlayer && ghost) ghost.dirty = true; // a lap with a respawn is not saved as a best lap
+  const { points, spacing } = track;
+  const p = points[Math.round(e.tracker.s / spacing) % points.length];
+  e.car.reset(p.x, p.z, Math.atan2(p.tz, p.tx), p.y);
+  e.tracker.setProgress(e.tracker.total);
+  e.stuckTime = 0;
+  e.offRoadTime = 0;
+  e.driver?.abort();
+}
+
+// ---- Menu and race flow ---------------------------------------------------------------
+
+// A simplified outline of a track for the menu's track preview. Built on demand and kept.
+const outlineCache = new Map();
+function outlineFor(id) {
+  if (!outlineCache.has(id)) {
+    let data = null;
+    try {
+      const { track } = prepareMap(mapById(id).build());
+      const stride = Math.max(1, Math.floor(track.points.length / 140));
+      data = { points: track.points.filter((_, i) => i % stride === 0).map((q) => [q.x, q.z]), length: track.length };
+    } catch {
+      /* no preview for this track */
+    }
+    outlineCache.set(id, data);
+  }
+  return outlineCache.get(id);
+}
+
+const mainMenu = createMainMenu({
+  getStorage,
+  skins: SKINS,
+  maps: MAPS,
+  onMapChange: (id) => installMap(prepareMap(mapById(id).build())),
+  onSkinChange: (id) => {
+    const skin = findSkin(id);
+    player.model.setSkin(skin);
+    player.color = skin.color;
+  },
+  onStart: () => startRace(),
+  onTune: () => settingsMenu.open(),
+  onGarage: (open) => {
+    garageOpen = open;
+  },
+  getOutline: outlineFor,
+});
+
+const player = createEntrant({
+  name: 'Guest',
+  isPlayer: true,
+  skin: findSkin(mainMenu.getState().skinId),
+});
+entrants = [player];
+placeOnGrid(entrants);
+
+// Wheel size and weight distribution also change how the cars look.
+subscribe(() => {
+  const spec = readCarSpec();
+  entrants.forEach((e) => e.model.applyDimensions(spec));
+});
+
+// ---- Ghost of the player's best laps ---------------------------------------------------
+// Two slots per map: lap 1 (from the grid) and later laps (flying). The ghost plays the slot that matches
+// the player's current lap and is always the best lap saved so far.
+const recorder = new GhostRecorder();
+const GHOST_SLOTS = ['start', 'fly'];
+const slotFor = (lapsDone) => (lapsDone === 0 ? 'start' : 'fly');
+let ghost = null; // { map, skin, wanted, data, pb, laps, dirty, saved, model, materials, lastX, lastZ, spin }
+
+const ghostUser = () => mainMenu.getState().user ?? 'guest';
+
+function clearGhost() {
+  if (ghost?.model) {
+    scene.remove(ghost.model.root);
+    ghost.model.dispose();
+    for (const m of ghost.materials) m.dispose();
+  }
+  ghost = null;
+  raceUi.setGhostDelta(null);
+}
+
+function startGhost(state) {
+  clearGhost();
+  recorder.reset();
+  const store = getStorage();
+  const data = {};
+  const pb = {};
+  for (const slot of GHOST_SLOTS) {
+    data[slot] = store ? loadGhost(store, ghostUser(), state.map, slot) : null;
+    pb[slot] = data[slot] ? data[slot].ms : Infinity;
+  }
+  ghost = { map: state.map, skin: findSkin(state.skinId), wanted: state.ghost, data, pb, laps: 0, dirty: false, saved: false, model: null, materials: [], lastX: 0, lastZ: 0, spin: 0 };
+}
+
+// The ghost is a see-through copy of the player's car. Its materials are cloned so other cars stay solid.
+function ensureGhostModel() {
+  if (ghost.model) return;
+  const model = createCarModel(ghost.skin);
+  model.root.traverse((o) => {
+    if (!o.isMesh) return;
+    const m = o.material.clone();
+    m.transparent = true;
+    m.opacity *= 0.4;
+    m.depthWrite = false;
+    o.material = m;
+    ghost.materials.push(m);
+  });
+  model.root.visible = false;
+  scene.add(model.root);
+  ghost.model = model;
+}
+
+// Called after every physics step: records the current lap and saves it when it beats the stored best.
+function trackGhost() {
+  if (!ghost || race.phase === 'countdown') return;
+  const c = player.car;
+  const state = { x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: c.pitch, roll: c.roll };
+  if (player.lapsDone > ghost.laps) {
+    const slot = slotFor(ghost.laps);
+    const endDist = player.tracker.total - ghost.laps * race.trackLength;
+    ghost.laps = player.lapsDone;
+    const lapTime = player.lapTimes[player.lapTimes.length - 1];
+    if (!ghost.dirty && Math.round(lapTime * 1000) < ghost.pb[slot]) {
+      const data = recorder.finish(lapTime, state, endDist);
+      const store = getStorage();
+      if (store && saveGhost(store, ghostUser(), ghost.map, data, slot)) {
+        ghost.pb[slot] = data.ms;
+        ghost.data[slot] = data;
+        ghost.saved = true;
+      }
+    }
+    recorder.reset();
+    ghost.dirty = false;
+  } else if (race.phase === 'racing') {
+    recorder.sample(race.time - player.lapStart, state, player.tracker.total - player.lapsDone * race.trackLength);
+  }
+}
+
+// ---- Sound ---------------------------------------------------------------------------------
+let lastSpeed = 0;
+let lastAirborne = false;
+let lastVy = 0;
+let lastCountText = '';
+
+// Called every frame: engine, tyre and wind sounds follow the cars; sudden stops and landings thud.
+function audioFrame() {
+  const c = player.car;
+  const speed = Math.abs(c.u);
+  const active = race !== null && race.phase !== 'finished' && !paused;
+  if (active) {
+    const crash = crashStrength(lastSpeed - speed);
+    if (crash > 0.05) audio.thud(crash);
+    if (lastAirborne && !c.airborne) {
+      const landing = landingStrength(-lastVy);
+      if (landing > 0.05) audio.thud(landing);
+    }
+    const bots = entrants
+      .filter((e) => !e.isPlayer)
+      .map((e) => ({ rpm: e.car.rpm, throttle: e.car.throttle, dist: Math.hypot(e.car.x - c.x, e.car.z - c.z) }))
+      .sort((a, b) => a.dist - b.dist);
+    audio.update({
+      active,
+      player: { rpm: c.rpm, throttle: c.throttle, slip: Math.max(...c.wheelSlip), speed, airborne: c.airborne },
+      bots,
+    });
+  } else {
+    audio.update({ active: false });
+  }
+  lastSpeed = speed;
+  lastAirborne = c.airborne;
+  lastVy = c.vy;
+}
+
+// Draws the ghost and the time difference. Called every frame.
+function renderGhost(alpha) {
+  const g = ghost;
+  const data = g?.wanted && race ? g.data[slotFor(player.lapsDone)] : null;
+  const live = race && (race.phase === 'racing' || (race.phase === 'countdown' && player.lapsDone === 0));
+  if (!data || !live) {
+    if (g?.model) g.model.root.visible = false;
+    if (g) raceUi.setGhostDelta(null);
+    return;
+  }
+  ensureGhostModel();
+  // The ghost restarts its lap whenever the player crosses the line (and waits on the grid in the countdown).
+  const t = race.phase === 'racing' ? race.time - (1 - alpha) * stepper.step - player.lapStart : 0;
+  const p = ghostPose(data, t);
+  const moved = Math.hypot(p.x - g.lastX, p.z - g.lastZ);
+  if (moved < 5) g.spin += moved / 0.33;
+  g.lastX = p.x;
+  g.lastZ = p.z;
+  g.model.root.visible = true;
+  g.model.update({ ...p, steer: 0, spin: [g.spin, g.spin, g.spin, g.spin], groundPitch: p.pitch, groundRoll: p.roll, pitch: 0, roll: 0, brake: 0 });
+  const there = ghostTimeAt(data, player.tracker.total - player.lapsDone * race.trackLength);
+  raceUi.setGhostDelta(race.phase === 'racing' && there !== null ? t - there : null);
+}
+
+function clearBots() {
+  entrants.filter((e) => !e.isPlayer).forEach(removeEntrant);
+  entrants = [player];
+}
+
+function startRace() {
+  setPaused(false);
+  lastCountText = '';
+  lastSpeed = 0; // the car was just put back on the grid: not a crash
+  const state = mainMenu.getState();
+  clearBots();
+  effects.clear();
+  style.reset();
+
+  const botSkins = SKINS.filter((s) => s.id !== state.skinId);
+  const bots = [];
+  for (let i = 0; i < state.bots; i++) {
+    bots.push(
+      createEntrant({
+        name: BOT_NAMES[i],
+        isPlayer: false,
+        skin: botSkins[i % botSkins.length],
+        driver: new BotDriver({
+          difficulty: state.difficulty,
+          variation: 0.95 + (0.05 * ((i * 5) % 7)) / 6,
+          laneOffset: LANE_OFFSETS[i],
+          speedScale: prepared.config.botSpeedScale ?? 1,
+          personality: PERSONALITIES[i % PERSONALITIES.length],
+        }),
+      })
+    );
+  }
+  player.name = state.name;
+  entrants = [...bots, player];
+  startGhost(state);
+  placeOnGrid(entrants);
+
+  race = new Race({ laps: state.laps, entrants, trackLength: track.length });
+  resultsShown = false;
+  raceUi.hideResults();
+  mainMenu.hide();
+}
+
+function backToMenu() {
+  setPaused(false);
+  clearGhost();
+  clearBots();
+  effects.clear();
+  race = null;
+  settingsMenu.close();
+  raceUi.hideResults();
+  raceUi.hideStatus();
+  raceUi.setCountdown('');
+  placeOnGrid(entrants);
+  mainMenu.show();
+}
+
+function finishRace() {
+  const order = race.standings();
+  const position = order.indexOf(player) + 1;
+  const state = mainMenu.getState();
+  const solo = state.bots === 0; // no bots: lap times and the ghost count, points do not
+
+  let saveNote = 'Playing as a guest: register in the menu to save scores.';
+  if (state.user) {
+    const store = getStorage();
+    const saved =
+      store &&
+      recordRace(store, state.user, {
+        position,
+        points: solo ? 0 : pointsFor(position),
+        solo,
+        bestLapMs: player.bestLap === null ? null : Math.round(player.bestLap * 1000),
+        map: prepared.config.id,
+      });
+    saveNote = saved
+      ? solo
+        ? `Solo run: best lap saved for ${state.user}, no points without bots.`
+        : `Saved to the leaderboard as ${state.user} (+${pointsFor(position)} points).`
+      : 'Could not save your score (storage is blocked or full).';
+  }
+
+  if (ghost?.saved) saveNote += ' New best-lap ghost saved.';
+  audio.jingle();
+
+  raceUi.showResults({
+    standings: order.map((e, i) => ({
+      position: i + 1,
+      name: e.isPlayer ? e.name : `${e.name} (bot)`,
+      isPlayer: e.isPlayer,
+      finished: e.finished,
+      time: e.finishTime,
+      lapsDone: e.lapsDone,
+      bestLap: e.bestLap,
+      points: solo ? 0 : pointsFor(i + 1),
+    })),
+    laps: race.laps,
+    saveNote,
+    onAgain: startRace,
+    onMenu: backToMenu,
+  });
+  settingsMenu.close();
+}
+
+let paused = false;
+let overlayWasOpen = false; // lets Esc that closes a settings screen not also open the pause menu
+
+function setPaused(value) {
+  paused = value;
+  if (!value) {
+    raceUi.hidePause();
+    return;
+  }
+  raceUi.showPause({
+    onResume: () => setPaused(false),
+    onRestart: startRace,
+    onMenu: backToMenu,
+    onSettings: () => gameMenu.open(),
+    onTune: () => settingsMenu.open(),
+  });
+}
+
+const isRacing = () => race !== null && (race.phase === 'countdown' || race.phase === 'racing');
+
+// ---- Frame loop -----------------------------------------------------------------------
+
+let cameraMode = 'first';
+let view = 'orbit'; // 'first', 'chase', 'rear' or 'orbit' (menu and results)
+let chaseYaw = player.car.yaw;
+let chaseY = player.car.y + CHASE_HEIGHT;
+let orbitAngle = 0;
+let garageOpen = false; // the Garage screen is open: the menu camera moves in close to show the paint
+const GARAGE_RADIUS = 5.4;
+const GARAGE_HEIGHT = 1.4;
+let orbitRadius = ORBIT_RADIUS;
+let orbitHeight = ORBIT_HEIGHT;
+let lastRender = performance.now();
+let lastView = null;
+let blend = 1; // 0..1 progress of the current view change
+const blendFrom = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+const blendTo = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+const lastPose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+
+function limitAngle(angle) {
+  return Math.max(-MAX_BODY_ANGLE, Math.min(MAX_BODY_ANGLE, angle));
+}
+
+function beforeFrame(frameDt) {
+  // Read per-frame input here, never inside fixedUpdate.
+  if (!isRacing() && paused) setPaused(false);
+  if (isRacing() && !overlayOpen() && !overlayWasOpen && input.wasPressed('Escape')) setPaused(!paused);
+  overlayWasOpen = overlayOpen();
+  if (isRacing() && !paused && input.wasPressed('KeyE')) settingsMenu.toggle();
+  if (isRacing() && !paused && !overlayOpen() && input.wasPressed('KeyC')) {
+    cycleCamera();
+  }
+  const driving = race !== null && race.phase === 'racing' && !overlayOpen() && !paused;
+
+  // The car is released while the settings menu is open.
+  controls.forward = driving && (input.isDown('KeyW') || input.isDown('ArrowUp'));
+  controls.back = driving && (input.isDown('KeyS') || input.isDown('ArrowDown'));
+  controls.left = driving && (input.isDown('KeyA') || input.isDown('ArrowLeft'));
+  controls.right = driving && (input.isDown('KeyD') || input.isDown('ArrowRight'));
+
+  controls.handbrake = driving && input.isDown('Space');
+  // Touch pedals add to the keys; the steering pad gives exact steering while a finger is on it.
+  controls.forward ||= driving && touch.state.forward;
+  controls.back ||= driving && touch.state.back;
+  controls.handbrake ||= driving && touch.state.handbrake;
+  controls.steer = driving && touch.state.steering ? touch.state.steer : undefined;
+
+  // Time slows down while the settings menu is open and eases back afterwards.
+  const target = settingsMenu.isOpen ? MENU_TIME_SCALE : 1;
+  const diff = target - stepper.timeScale;
+  stepper.timeScale = paused
+    ? 0
+    : Math.abs(diff) < 0.001
+      ? target
+      : stepper.timeScale + diff * (1 - Math.exp(-frameDt * TIME_EASE_RATE));
+}
+
+function fixedUpdate(dt) {
+  if (race === null) return;
+  if (race.phase === 'countdown') {
+    race.update(dt);
+    return;
+  }
+  if (race.phase !== 'racing') return;
+
+  const spec = readCarSpec();
+  for (const e of entrants) {
+    e.car.step(dt, e.isPlayer ? controls : e.driver.drive(e.car, e.tracker, spec, { dt, traffic: entrants.map((x) => x.car) }));
+  }
+
+  // A sudden loss of speed during collision handling is an impact: throw sparks.
+  const before = entrants.map((e) => Math.hypot(e.car.u, e.car.v));
+  resolveCollisions(
+    entrants.map((e) => e.car),
+    world,
+    spec
+  );
+  let playerCrashed = false;
+  entrants.forEach((e, i) => {
+    const lost = before[i] - Math.hypot(e.car.u, e.car.v);
+    if (e.isPlayer && lost > SPARK_SPEED_LOSS) playerCrashed = true;
+    if (lost > SPARK_SPEED_LOSS) effects.spark(e.car.x, e.car.y + 0.5, e.car.z, Math.min(30, Math.round(lost * 3)));
+  });
+
+  style.update(dt, player.car, { crashed: playerCrashed });
+
+  for (const e of entrants) {
+    e.tracker.update(e.car.x, e.car.z, e.car.y, !e.car.airborne);
+    // Falling into water or off the world puts the car back on the road.
+    if (world.hazard(e.car.x, e.car.z, e.car.y)) respawn(e);
+
+    // Cars that get stuck or lost are put back on the road (the player gets longer, since there is no
+    // reset key).
+    if (!e.isPlayer || race.phase === 'racing') {
+      e.stuckTime = Math.abs(e.car.u) < 1.5 ? e.stuckTime + dt : 0;
+      e.offRoadTime = e.tracker.offTrack ? e.offRoadTime + dt : 0;
+      const slack = e.isPlayer ? 2 : 1;
+      if (e.stuckTime > STUCK_SECONDS * slack || e.offRoadTime > OFF_ROAD_SECONDS * slack) respawn(e);
+    }
+  }
+  race.update(dt);
+  trackGhost();
+
+  if (race.phase === 'finished' && !resultsShown) {
+    resultsShown = true;
+    finishRace();
+  }
+}
+
+// Draws a car between its previous and current physics state and returns where it is.
+function updateModel(e, alpha) {
+  const c = e.car;
+  const p = c.prev;
+  const mix = (a, b) => a + (b - a) * alpha;
+  const pose = { x: mix(p.x, c.x), y: mix(p.y, c.y), z: mix(p.z, c.z), yaw: mix(p.yaw, c.yaw), roll: mix(p.roll, c.roll) };
+  e.model.update({
+    ...pose,
+    steer: mix(p.steer, c.steer),
+    spin: c.wheelSpin.map((s, i) => mix(p.spin[i], s)),
+    groundPitch: mix(p.pitch, c.pitch),
+    groundRoll: mix(p.roll, c.roll),
+    pitch: limitAngle(c.accelX * PITCH_PER_ACCEL),
+    roll: limitAngle(-c.accelY * ROLL_PER_ACCEL),
+    brake: c.brake,
+  });
+  return pose;
+}
+
+let tunnelLight = 0; // 0..1, how far inside a tunnel the player is
+let camRoll = 0; // rad the camera leans with a banked road
+const lightBase = { sun: 2, hemi: 1, headlight: 0 };
+
+// Puts the free camera at (x, y, z) without letting it sink into the ground, pop onto the mountain above a
+// tunnel, or leave the tunnel walls.
+function placeAwayFromGround(x, y, z, me) {
+  const lat = world.lateral(x, z, me.y + 1);
+  const inTunnel = lat?.mode === 't';
+  if (inTunnel) {
+    const limit = world.wallOffset - 1.2;
+    const excess = lat.offset - Math.max(-limit, Math.min(limit, lat.offset));
+    x -= lat.nx * excess;
+    z -= lat.nz * excess;
+  }
+  const floor = world.floorHeight(x, z, me.y + 2);
+  if (floor !== null) y = Math.max(y, floor + 1.5);
+  if (inTunnel && floor !== null) y = Math.min(y, floor + 5);
+  camera.position.set(x, y, z);
+}
+
+function render(alpha) {
+  const now = performance.now();
+  const frameDt = Math.min((now - lastRender) / 1000, 0.1);
+  fpsFrames++;
+  fpsTime += frameDt;
+  if (fpsTime >= 0.5) {
+    if (!fpsCounter.hidden) fpsCounter.textContent = `${Math.round(fpsFrames / fpsTime)} fps`;
+    fpsFrames = 0;
+    fpsTime = 0;
+  }
+  lastRender = now;
+
+  let me = null;
+  for (const e of entrants) {
+    const pose = updateModel(e, alpha);
+    if (e.isPlayer) me = pose;
+  }
+
+  renderGhost(alpha);
+  audioFrame();
+
+  const racing = isRacing();
+  look.update(frameDt);
+  view = racing ? cameraMode : 'orbit';
+  // Free look orbits from the chase pose (the rear pose when that is the chosen view).
+  if (racing && look.engaged && view === 'first') view = 'chase';
+
+  // Speed widens the field of view; the change is smoothed so it never pops.
+  const speedFactor = Math.min(1, Math.abs(player.car.u) / FULL_SPEED);
+  const baseFov = gameSettings.get('video.fov');
+  const boost = gameSettings.get('video.speedFov') ? gameSettings.get('video.speedFovAmount') : 0;
+  const targetFov =
+    view === 'first' ? fovFor('first', baseFov) + boost * speedFactor : fovFor('chase', baseFov) + (view === 'orbit' ? 0 : boost * speedFactor);
+  const nextFov = camera.fov + (targetFov - camera.fov) * (1 - Math.exp(-frameDt * 6));
+  if (Math.abs(nextFov - camera.fov) > 0.005) {
+    camera.fov = nextFov;
+    camera.updateProjectionMatrix();
+  }
+
+  chaseYaw += (me.yaw - chaseYaw) * (1 - Math.exp(-frameDt * 4));
+  chaseY += (me.y + CHASE_HEIGHT - chaseY) * (1 - Math.exp(-frameDt * 5));
+  orbitAngle += frameDt * (garageOpen ? 0.25 : 0.35);
+  orbitRadius += ((garageOpen ? GARAGE_RADIUS : ORBIT_RADIUS) - orbitRadius) * Math.min(1, frameDt * 4);
+  orbitHeight += ((garageOpen ? GARAGE_HEIGHT : ORBIT_HEIGHT) - orbitHeight) * Math.min(1, frameDt * 4);
+
+  // Tunnels are dark, and the camera leans with a banked road.
+  const lat = racing ? world.lateral(me.x, me.z, me.y) : null;
+  tunnelLight += ((lat?.mode === 't' ? 1 : 0) - tunnelLight) * Math.min(1, frameDt * 4);
+  sun.intensity = lightBase.sun * (1 - 0.9 * tunnelLight);
+  hemi.intensity = lightBase.hemi * (1 - 0.65 * tunnelLight);
+  headlight.intensity = Math.max(lightBase.headlight, 40 * tunnelLight);
+  camRoll += (me.roll * (view === 'first' ? 0.9 : 0.5) - camRoll) * Math.min(1, frameDt * 6);
+
+  if (view === 'first') {
+    player.model.placeCamera(camera);
+  } else if (view === 'chase' || view === 'rear') {
+    // The rear view is the chase view turned around: the camera sits ahead of the car and looks back.
+    // Free look orbits the same pivot, so with no offset it is exactly this pose.
+    const heading = chaseYaw + (view === 'rear' ? Math.PI : 0);
+    const distance = CHASE_DISTANCE + 3 * speedFactor;
+    const rise = chaseY - (me.y + 1.0);
+    const o = look.orbit(heading + Math.PI, Math.atan2(rise, distance), Math.hypot(distance, rise));
+    const flat = o.radius * Math.cos(o.pitch);
+    const camX = me.x + flat * Math.cos(o.angle);
+    const camZ = me.z + flat * Math.sin(o.angle);
+    const camY = me.y + 1.0 + o.radius * Math.sin(o.pitch);
+    placeAwayFromGround(camX, camY, camZ, me);
+    camera.lookAt(
+      me.x - CHASE_LOOK_AHEAD * Math.cos(o.angle),
+      me.y + 1.0,
+      me.z - CHASE_LOOK_AHEAD * Math.sin(o.angle)
+    );
+  } else {
+    const camX = me.x + Math.cos(orbitAngle) * orbitRadius;
+    const camZ = me.z + Math.sin(orbitAngle) * orbitRadius;
+    placeAwayFromGround(camX, me.y + orbitHeight, camZ, me);
+    camera.lookAt(me.x, me.y + 0.8, me.z);
+  }
+
+  if (view !== 'orbit') camera.rotateZ(-camRoll);
+
+  // Changing view blends from the last camera pose instead of jumping.
+  if (view !== lastView) {
+    if (lastView !== null) {
+      blendFrom.pos.copy(lastPose.pos);
+      blendFrom.quat.copy(lastPose.quat);
+      blend = 0;
+    }
+    lastView = view;
+  }
+  if (blend < 1) {
+    blend = Math.min(1, blend + frameDt / VIEW_BLEND_SECONDS);
+    const k = blend * blend * (3 - 2 * blend);
+    blendTo.pos.copy(camera.position);
+    blendTo.quat.copy(camera.quaternion);
+    camera.position.lerpVectors(blendFrom.pos, blendTo.pos, k);
+    camera.quaternion.copy(blendFrom.quat).slerp(blendTo.quat, k);
+  }
+  lastPose.pos.copy(camera.position);
+  lastPose.quat.copy(camera.quaternion);
+
+  sun.position.set(me.x + sunDir.x * 100, me.y + sunDir.y * 100, me.z + sunDir.z * 100);
+  sun.target.position.set(me.x, me.y, me.z);
+  sun.target.updateMatrixWorld();
+  mapScene.update(camera.position);
+
+  effects.update(frameDt, entrants, camera, renderer.domElement.height);
+  renderer.render(scene, camera);
+
+  hud.hidden = !racing || !gameSettings.get('hud.hints');
+  if (racing) hud.textContent = touch.enabled
+      ? touch.hint
+      : 'W/S gas/brake | A/D steer | Space handbrake | drag mouse to look | C camera | E tune car | Esc pause';
+  touch.setVisible(racing && !paused && !overlayOpen());
+
+  hudPanel.setVisible(racing);
+  if (racing) {
+    hudPanel.update({
+      kmh: Math.round(Math.abs(player.car.u) * 3.6),
+      gear: player.car.gear < 0 ? 'R' : String(player.car.gear),
+      rpm: player.car.rpm,
+      redline: readCarSpec().redline,
+      driftText:
+        style.driftPoints > 0
+          ? `DRIFT ${Math.round(style.driftPoints)} x${style.multiplier}`
+          : style.popup > 0
+            ? style.popupText
+            : '',
+      cars: entrants.map((e) => ({ x: e.car.x, z: e.car.z, isPlayer: e.isPlayer, color: e.color })),
+    });
+  }
+
+  if (race !== null) {
+    raceUi.setStatus({
+      position: race.standings().indexOf(player) + 1,
+      total: entrants.length,
+      lap: Math.min(race.laps, player.lapsDone + 1),
+      laps: race.laps,
+      time: Math.max(0, race.time),
+      bestLap: player.bestLap,
+      offTrack: race.phase === 'racing' && player.tracker.offTrack,
+    });
+    const countText =
+      race.phase === 'countdown' ? String(Math.ceil(race.countdown)) : race.phase === 'racing' && race.time < 1 ? 'GO!' : '';
+    raceUi.setCountdown(countText);
+    if (countText !== lastCountText) {
+      lastCountText = countText;
+      if (countText === 'GO!') audio.tone(880, 0.35);
+      else if (countText) audio.tone(440, 0.15);
+    }
+  }
+
+  input.endFrame();
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Night maps give the player headlights.
+const headlight = new THREE.SpotLight(0xfff0cc, 0, 140, 0.55, 0.7, 1);
+headlight.position.set(1.8, 0.9, 0);
+headlight.target.position.set(30, -1, 0);
+player.model.root.add(headlight, headlight.target);
+
+// Swaps the whole map: world, scenery, lighting, minimap and the starting grid.
+function installMap(next) {
+  if (mapScene) {
+    scene.remove(mapScene.group);
+    mapScene.dispose();
+  }
+  prepared = next;
+  track = next.track;
+  world = next.world;
+  mapScene = buildMapScene(next);
+  scene.add(mapScene.group);
+
+  const theme = next.config.theme;
+  scene.background = new THREE.Color(theme.sky[1]);
+  scene.fog = new THREE.Fog(theme.fog[0], theme.fog[1], theme.fog[2]);
+  const l = mapScene.lights;
+  hemi.color.set(l.hemi.sky);
+  hemi.groundColor.set(l.hemi.ground);
+  sun.color.set(l.sun.color);
+  lightBase.sun = l.sun.intensity;
+  lightBase.hemi = l.hemi.intensity;
+  lightBase.headlight = l.headlights ? 40 : 0;
+  sunDir.set(...l.dir).normalize();
+
+  clearBots();
+  effects.clear();
+  style.reset();
+  player.car.ground = world;
+  player.tracker = new TrackTracker(track);
+  hudPanel.setTrack(track);
+  placeOnGrid(entrants);
+  chaseYaw = player.car.yaw;
+  chaseY = player.car.y + CHASE_HEIGHT;
+  lastView = null;
+}
+installMap(prepared);
+
+runLoop({ stepper, beforeFrame, fixedUpdate, render });
